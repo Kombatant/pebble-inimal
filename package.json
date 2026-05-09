@@ -18,7 +18,8 @@
             "NIGHT_MODE_ENABLED",
             "NIGHT_START_HOUR",
             "NIGHT_END_HOUR",
-            "WEATHER_INTERVAL"
+            "WEATHER_INTERVAL",
+            "FACE_MODE"
         ],
         "projectType": "native",
         "resources": {
@@ -70,6 +71,38 @@
                         "emery"
                     ],
                     "type": "bitmap"
+                },
+                {
+                    "file": "images/steps.png",
+                    "name": "STEPS",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "fonts/Rakuten Condensed Bold.ttf",
+                    "name": "FONT_TIME_78",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
+                },
+                {
+                    "file": "fonts/Inter_24pt-SemiBold.ttf",
+                    "name": "FONT_TOP_20",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
+                },
+                {
+                    "file": "fonts/Rakuten Condensed Bold.ttf",
+                    "name": "FONT_STAT_22",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
                 }
             ]
         },
@@ -82,5 +115,5 @@
             "watchface": true
         }
     },
-    "version": "0.3.1"
+    "version": "0.5.0"
 }

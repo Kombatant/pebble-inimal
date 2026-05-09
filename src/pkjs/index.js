@@ -95,6 +95,13 @@ var CONFIG_HTML =
 '<h1>Pebble-inimal Watchface</h1>' +
 
 '<div class="field">' +
+'<label for="faceMode">Watchface design</label>' +
+'<select id="faceMode">' +
+'<option value="0" __FM0__>Minimal mode</option>' +
+'<option value="1" __FM1__>Larger mode</option>' +
+'</select></div>' +
+
+'<div class="field">' +
 '<div class="toggle">' +
 '<input type="checkbox" id="nightMode" __NIGHT_CHECKED__>' +
 '<label for="nightMode">Night idle mode</label></div>' +
@@ -132,6 +139,7 @@ var CONFIG_HTML =
 'var d={NIGHT_MODE_ENABLED:t.checked?1:0,' +
 'NIGHT_START_HOUR:hourFromTime(document.getElementById("nightStart").value),' +
 'NIGHT_END_HOUR:hourFromTime(document.getElementById("nightEnd").value),' +
+'FACE_MODE:parseInt(document.getElementById("faceMode").value,10),' +
 'WEATHER_INTERVAL:parseInt(document.getElementById("weather").value,10)};' +
 'document.location="pebblejs://close#"+encodeURIComponent(JSON.stringify(d));}' +
 '</script></body></html>';
@@ -141,7 +149,8 @@ function getStoredSettings() {
         nightMode:  localStorage.getItem('nightMode')  === '1',  // default false
         nightStart: parseInt(localStorage.getItem('nightStart') || '0', 10),
         nightEnd:   parseInt(localStorage.getItem('nightEnd')   || '6', 10),
-        weather:    parseInt(localStorage.getItem('weather')    || '30', 10)
+        weather:    parseInt(localStorage.getItem('weather')    || '30', 10),
+        faceMode:   parseInt(localStorage.getItem('faceMode')   || '1', 10)
     };
 }
 
@@ -154,6 +163,8 @@ function buildConfigUrl() {
         .replace('__NIGHT_OPTS_CLASS__', s.nightMode ? '' : 'hidden')
         .replace('__NIGHT_START__',      pad2(s.nightStart) + ':00')
         .replace('__NIGHT_END__',        pad2(s.nightEnd)   + ':00')
+        .replace('__FM0__',  s.faceMode === 0 ? 'selected' : '')
+        .replace('__FM1__',  s.faceMode === 1 ? 'selected' : '')
         .replace('__W15__',  s.weather === 15  ? 'selected' : '')
         .replace('__W30__',  s.weather === 30  ? 'selected' : '')
         .replace('__W60__',  s.weather === 60  ? 'selected' : '')
@@ -175,6 +186,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
         localStorage.setItem('nightStart', String(settings.NIGHT_START_HOUR));
         localStorage.setItem('nightEnd',   String(settings.NIGHT_END_HOUR));
         localStorage.setItem('weather',    String(settings.WEATHER_INTERVAL));
+        localStorage.setItem('faceMode',   String(settings.FACE_MODE || 0));
 
         Pebble.sendAppMessage(settings,
             function ()  { console.log('Settings sent: ' + JSON.stringify(settings)); },

@@ -11,6 +11,7 @@
 // =============================================================================
 
 #include <pebble.h>
+#include <ctype.h>
 
 // ---------- Layout constants (Emery is 200 x 228) -----------------------------
 // Vertical rhythm: each section sits a few px below the one above so the face
@@ -38,6 +39,18 @@
 #define BAR_HEIGHT       6
 #define BAR_WIDTH        160     // centered: x = (200-160)/2 = 20
 
+// Larger mode layout, scaled to Emery's 200x228 display.
+#define LARGE_TOP_Y          15
+#define LARGE_DIVIDER_Y      46
+#define LARGE_TIME_Y         44
+#define LARGE_TIME_H         78
+#define LARGE_SECONDS_X      163
+#define LARGE_SECONDS_Y      66
+#define LARGE_STATS_Y        138
+#define LARGE_STATS_H        38
+#define LARGE_BATTERY_Y      190
+#define LARGE_BATTERY_BAR_Y  201
+
 // ---------- Globals -----------------------------------------------------------
 static Window *s_main_window;
 static Layer *s_canvas_layer;
@@ -49,17 +62,24 @@ static TextLayer *s_km_label_layer;
 static TextLayer *s_steps_value_layer;
 static TextLayer *s_hr_value_layer;
 static TextLayer *s_dist_value_layer;
+static TextLayer *s_temp_layer;
+static TextLayer *s_seconds_layer;
+static TextLayer *s_battery_value_layer;
 
 // Custom fonts (Atkinson Hyperlegible, loaded from resources)
 static GFont s_font_time;
+static GFont s_font_time_large;
+static GFont s_font_top;
 static GFont s_font_label;
 static GFont s_font_stat;
+static GFont s_font_stat_large;
 static GFont s_font_small;
 
 // Bitmaps loaded from resources
 static GBitmap *s_bolt_bitmap;
 static GBitmap *s_bt_on_bitmap;
 static GBitmap *s_bt_off_bitmap;
+static GBitmap *s_steps_bitmap;
 
 // Bluetooth connection state
 static bool s_bt_connected = true;
@@ -67,10 +87,13 @@ static bool s_bt_connected = true;
 // Buffers (must remain valid as long as TextLayer references them)
 static char s_time_buffer[12];   // "HH:MM:SS" + null
 static char s_date_buffer[32];
+static char s_seconds_buffer[4];
+static char s_temp_buffer[8];
 static char s_steps_buffer[12];
 static char s_hr_buffer[12];
 static char s_dist_buffer[16];
 static char s_battery_text_buffer[8];
+static int s_last_hr_bpm = 0;
 
 // Cached time components used by the unified time renderer.
 // s_displayed_seconds is the value currently painted on the watch — it's
@@ -102,6 +125,12 @@ static int  s_night_start_hour    = 0;       // 00:00 = midnight
 static int  s_night_end_hour      = 6;       // 06:00 = 6 AM
 static int  s_weather_interval_min = 30;
 
+typedef enum {
+    FaceModeMinimal = 0,
+    FaceModeLarger  = 1
+} FaceMode;
+static FaceMode s_face_mode = FaceModeLarger;
+
 // Tracking state for the night-idle gate and the weather refresh schedule
 static time_t s_last_tap_time      = 0;
 static time_t s_last_weather_fetch = 0;
@@ -114,6 +143,7 @@ static time_t s_last_weather_fetch = 0;
 #define PERSIST_KEY_WEATHER_INT  104
 #define PERSIST_KEY_NIGHT_START  105
 #define PERSIST_KEY_NIGHT_END    106
+#define PERSIST_KEY_FACE_MODE    107
 
 // =============================================================================
 // Drawing helpers
@@ -165,6 +195,14 @@ static void draw_cloud_only(GContext *ctx, int cx, int cy, GColor color) {
     graphics_fill_circle(ctx, GPoint(cx,      cy - 4), 12);
     graphics_fill_circle(ctx, GPoint(cx + 13, cy + 3), 10);
     graphics_fill_rect  (ctx, GRect(cx - 18, cy + 2, 38, 9), 4, GCornersBottom);
+}
+
+static void draw_cloud_only_small(GContext *ctx, int cx, int cy, GColor color) {
+    graphics_context_set_fill_color(ctx, color);
+    graphics_fill_circle(ctx, GPoint(cx - 9, cy + 2), 7);
+    graphics_fill_circle(ctx, GPoint(cx,     cy - 3), 9);
+    graphics_fill_circle(ctx, GPoint(cx + 10, cy + 2), 7);
+    graphics_fill_rect(ctx, GRect(cx - 14, cy + 2, 29, 7), 3, GCornersBottom);
 }
 
 static void draw_rain(GContext *ctx, int cx, int cy) {
@@ -225,6 +263,14 @@ static void draw_weather_icon(GContext *ctx, int cx, int cy, int code) {
     draw_sun_cloud(ctx, cx, cy);
 }
 
+static void draw_weather_icon_small(GContext *ctx, int cx, int cy, int code) {
+    if (code == 0) {
+        draw_sun_only(ctx, cx, cy);
+        return;
+    }
+    draw_cloud_only_small(ctx, cx, cy, GColorWhite);
+}
+
 static void draw_heart(GContext *ctx, int cx, int cy, GColor color) {
     graphics_context_set_fill_color(ctx, color);
     graphics_fill_circle(ctx, GPoint(cx - 4, cy - 2), 4);
@@ -235,6 +281,22 @@ static void draw_heart(GContext *ctx, int cx, int cy, GColor color) {
             { (int16_t)(cx - 8), (int16_t)(cy - 1) },
             { (int16_t)(cx + 8), (int16_t)(cy - 1) },
             { (int16_t)(cx),     (int16_t)(cy + 8) }
+        }
+    };
+    GPath *p = gpath_create(&info);
+    if (p) { gpath_draw_filled(ctx, p); gpath_destroy(p); }
+}
+
+static void draw_heart_large(GContext *ctx, int cx, int cy, GColor color) {
+    graphics_context_set_fill_color(ctx, color);
+    graphics_fill_circle(ctx, GPoint(cx - 5, cy - 3), 5);
+    graphics_fill_circle(ctx, GPoint(cx + 5, cy - 3), 5);
+    GPathInfo info = {
+        .num_points = 3,
+        .points = (GPoint[]) {
+            { (int16_t)(cx - 10), (int16_t)(cy - 2) },
+            { (int16_t)(cx + 10), (int16_t)(cy - 2) },
+            { (int16_t)cx,        (int16_t)(cy + 10) }
         }
     };
     GPath *p = gpath_create(&info);
@@ -303,10 +365,74 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
 // =============================================================================
 // Canvas update procedure
 // =============================================================================
+static void draw_larger_canvas(GContext *ctx, int W, int H) {
+    GColor dim = GColorDarkGray;
+    GColor red = COLOR_FALLBACK(GColorRed, GColorWhite);
+    GColor green = COLOR_FALLBACK(GColorGreen, GColorWhite);
+
+    draw_tick_marks(ctx, W, H);
+    draw_weather_icon_small(ctx, 35, 27, s_weather_code);
+
+    graphics_context_set_stroke_color(ctx, dim);
+    graphics_context_set_stroke_width(ctx, 1);
+    graphics_draw_line(ctx, GPoint(16, LARGE_DIVIDER_Y), GPoint(W - 16, LARGE_DIVIDER_Y));
+
+    graphics_context_set_stroke_color(ctx, dim);
+    graphics_context_set_stroke_width(ctx, 2);
+    graphics_draw_line(ctx, GPoint(LARGE_SECONDS_X - 5, LARGE_TIME_Y + 3),
+                       GPoint(LARGE_SECONDS_X - 5, LARGE_TIME_Y + LARGE_TIME_H - 6));
+
+    graphics_draw_round_rect(ctx, GRect(10, LARGE_STATS_Y, 86, LARGE_STATS_H), 6);
+    graphics_draw_round_rect(ctx, GRect(104, LARGE_STATS_Y, 86, LARGE_STATS_H), 6);
+    graphics_context_set_stroke_width(ctx, 1);
+
+    graphics_context_set_compositing_mode(ctx, GCompOpSet);
+    if (s_steps_bitmap) {
+        graphics_draw_bitmap_in_rect(ctx, s_steps_bitmap,
+                                     GRect(13, LARGE_STATS_Y + 7, 24, 24));
+    }
+
+    draw_heart_large(ctx, 122, LARGE_STATS_Y + 20, red);
+
+    GBitmap *bt = s_bt_connected ? s_bt_on_bitmap : s_bt_off_bitmap;
+    if (bt) {
+        graphics_draw_bitmap_in_rect(ctx, bt, GRect(168, 100, 24, 24));
+    }
+
+    if (s_bolt_bitmap) {
+        graphics_draw_bitmap_in_rect(ctx, s_bolt_bitmap,
+                                     GRect(14, LARGE_BATTERY_Y + 3, 24, 24));
+    }
+
+    const int bar_x = 112;
+    const int bar_w = 72;
+    const int bar_h = 8;
+    graphics_context_set_fill_color(ctx, GColorDarkGray);
+    graphics_fill_rect(ctx, GRect(bar_x, LARGE_BATTERY_BAR_Y, bar_w, bar_h),
+                       bar_h / 2, GCornersAll);
+
+    int fill_w = (bar_w * s_battery_level) / 100;
+    if (s_battery_level > 0 && fill_w < bar_h) fill_w = bar_h;
+    if (fill_w > 0) {
+        graphics_context_set_fill_color(ctx,
+            s_battery_level <= 20 ? red : green);
+        graphics_fill_rect(ctx, GRect(bar_x, LARGE_BATTERY_BAR_Y, fill_w, bar_h),
+                           bar_h / 2, GCornersAll);
+    }
+}
+
 static void canvas_update_proc(Layer *layer, GContext *ctx) {
     GRect bounds = layer_get_bounds(layer);
     const int W = bounds.size.w;
     const int H = bounds.size.h;
+
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+    if (s_face_mode == FaceModeLarger) {
+        draw_larger_canvas(ctx, W, H);
+        return;
+    }
 
     // 0. Tick marks around the perimeter (drawn first, others paint on top)
     draw_tick_marks(ctx, W, H);
@@ -405,8 +531,22 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
 // Renders the time string from cached components. Called whenever any of
 // hour/minute/second changes (or when seconds need to freeze in place).
 static void render_time(void) {
-    snprintf(s_time_buffer, sizeof(s_time_buffer), "%02d:%02d:%02d",
-             s_displayed_hour, s_displayed_min, s_displayed_seconds);
+    if (s_face_mode == FaceModeLarger) {
+        snprintf(s_time_buffer, sizeof(s_time_buffer), "%02d:%02d",
+                 s_displayed_hour, s_displayed_min);
+        if (s_seconds_active) {
+            snprintf(s_seconds_buffer, sizeof(s_seconds_buffer), "%02d",
+                     s_displayed_seconds);
+        } else {
+            s_seconds_buffer[0] = '\0';
+        }
+        if (s_seconds_layer) {
+            text_layer_set_text(s_seconds_layer, s_seconds_buffer);
+        }
+    } else {
+        snprintf(s_time_buffer, sizeof(s_time_buffer), "%02d:%02d:%02d",
+                 s_displayed_hour, s_displayed_min, s_displayed_seconds);
+    }
     text_layer_set_text(s_time_layer, s_time_buffer);
 }
 
@@ -425,12 +565,25 @@ static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
     char day_buf[3], wday_buf[6];
     strftime(day_buf,  sizeof(day_buf),  "%d", now);
     strftime(wday_buf, sizeof(wday_buf), "%a", now);
-    if (s_temp_known) {
-        snprintf(s_date_buffer, sizeof(s_date_buffer),
-                 "%s %s.  |  %d\u00B0C", day_buf, wday_buf, s_temp_c);
+
+    if (s_face_mode == FaceModeLarger) {
+        for (int i = 0; wday_buf[i]; i++) {
+            wday_buf[i] = (char)toupper((unsigned char)wday_buf[i]);
+        }
+        snprintf(s_date_buffer, sizeof(s_date_buffer), "%s %s", wday_buf, day_buf);
+        snprintf(s_temp_buffer, sizeof(s_temp_buffer),
+                 s_temp_known ? "%d\u00B0C" : "--\u00B0C", s_temp_c);
+        if (s_temp_layer) {
+            text_layer_set_text(s_temp_layer, s_temp_buffer);
+        }
     } else {
-        snprintf(s_date_buffer, sizeof(s_date_buffer),
-                 "%s %s.  |  --\u00B0C", day_buf, wday_buf);
+        if (s_temp_known) {
+            snprintf(s_date_buffer, sizeof(s_date_buffer),
+                     "%s %s.  |  %d\u00B0C", day_buf, wday_buf, s_temp_c);
+        } else {
+            snprintf(s_date_buffer, sizeof(s_date_buffer),
+                     "%s %s.  |  --\u00B0C", day_buf, wday_buf);
+        }
     }
     text_layer_set_text(s_date_layer, s_date_buffer);
 }
@@ -475,9 +628,18 @@ static void update_health_data() {
     // Heart rate (most recent reading)
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateBPM);
     if (bpm > 0) {
-        snprintf(s_hr_buffer, sizeof(s_hr_buffer), "%d", (int)bpm);
+        s_last_hr_bpm = (int)bpm;
+        snprintf(s_hr_buffer, sizeof(s_hr_buffer), "%d", s_last_hr_bpm);
     } else {
-        snprintf(s_hr_buffer, sizeof(s_hr_buffer), "--");
+        bpm = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+        if (bpm > 0) {
+            s_last_hr_bpm = (int)bpm;
+            snprintf(s_hr_buffer, sizeof(s_hr_buffer), "%d", s_last_hr_bpm);
+        } else if (s_last_hr_bpm > 0) {
+            snprintf(s_hr_buffer, sizeof(s_hr_buffer), "%d", s_last_hr_bpm);
+        } else {
+            snprintf(s_hr_buffer, sizeof(s_hr_buffer), "--");
+        }
     }
     text_layer_set_text(s_hr_value_layer, s_hr_buffer);
 #else
@@ -508,6 +670,9 @@ static void battery_callback(BatteryChargeState state) {
     s_battery_level = state.charge_percent;
     snprintf(s_battery_text_buffer, sizeof(s_battery_text_buffer),
              "%d%%", s_battery_level);
+    if (s_battery_value_layer) {
+        text_layer_set_text(s_battery_value_layer, s_battery_text_buffer);
+    }
     if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
 }
 
@@ -606,6 +771,9 @@ static void seconds_timeout_handler(void *context) {
         app_timer_cancel(s_seconds_tick_timer);
         s_seconds_tick_timer = NULL;
     }
+    if (s_face_mode == FaceModeLarger) {
+        render_time();
+    }
 }
 
 static void deferred_refresh_handler(void *context) {
@@ -656,6 +824,8 @@ static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
 // =============================================================================
 // AppMessage (weather from PebbleKit JS)
 // =============================================================================
+static void apply_face_mode_layout(GRect bounds);
+
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
     Tuple *t = dict_find(iterator, MESSAGE_KEY_TEMPERATURE);
     if (t) {
@@ -703,6 +873,21 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
             APP_LOG(APP_LOG_LEVEL_INFO, "Weather interval: %d min", v);
         }
     }
+    Tuple *mode = dict_find(iterator, MESSAGE_KEY_FACE_MODE);
+    if (mode) {
+        int v = (int)mode->value->int32;
+        if (v == FaceModeMinimal || v == FaceModeLarger) {
+            s_face_mode = (FaceMode)v;
+            persist_write_int(PERSIST_KEY_FACE_MODE, (int)s_face_mode);
+            if (s_main_window) {
+                Layer *root = window_get_root_layer(s_main_window);
+                apply_face_mode_layout(layer_get_bounds(root));
+                update_time_and_date();
+                update_health_data();
+            }
+            APP_LOG(APP_LOG_LEVEL_INFO, "Face mode: %d", v);
+        }
+    }
 }
 
 static void inbox_dropped_callback(AppMessageResult reason, void *context) {
@@ -720,6 +905,91 @@ static void outbox_sent_callback(DictionaryIterator *it, void *ctx) {
 // =============================================================================
 // Window load / unload
 // =============================================================================
+static void set_text_layer_hidden(TextLayer *text_layer, bool hidden) {
+    if (text_layer) {
+        layer_set_hidden(text_layer_get_layer(text_layer), hidden);
+    }
+}
+
+static void apply_face_mode_layout(GRect bounds) {
+    const int W = bounds.size.w;
+    const bool large = (s_face_mode == FaceModeLarger);
+    GColor green = COLOR_FALLBACK(GColorGreen, GColorWhite);
+    GColor red = COLOR_FALLBACK(GColorRed, GColorWhite);
+
+    layer_set_frame(text_layer_get_layer(s_date_layer),
+                    large ? GRect(106, LARGE_TOP_Y - 1, 78, 28)
+                          : GRect(0, DATE_ROW_Y, W, 22));
+    text_layer_set_font(s_date_layer, large ? s_font_top : s_font_label);
+    text_layer_set_text_color(s_date_layer, GColorWhite);
+    text_layer_set_text_alignment(s_date_layer,
+                                  large ? GTextAlignmentRight : GTextAlignmentCenter);
+
+    layer_set_frame(text_layer_get_layer(s_time_layer),
+                    large ? GRect(8, LARGE_TIME_Y, 150, LARGE_TIME_H)
+                          : GRect(0, TIME_Y, W, 58));
+    text_layer_set_font(s_time_layer, large ? s_font_time_large : s_font_time);
+    text_layer_set_text_color(s_time_layer, GColorWhite);
+    text_layer_set_text_alignment(s_time_layer, GTextAlignmentCenter);
+
+    set_text_layer_hidden(s_steps_label_layer, large);
+    set_text_layer_hidden(s_km_label_layer, large);
+    set_text_layer_hidden(s_dist_value_layer, large);
+    set_text_layer_hidden(s_temp_layer, !large);
+    set_text_layer_hidden(s_seconds_layer, !large);
+    set_text_layer_hidden(s_battery_value_layer, !large);
+
+    layer_set_frame(text_layer_get_layer(s_steps_label_layer),
+                    GRect(10, STATS_LABEL_Y - 1, 60, 18));
+    layer_set_frame(text_layer_get_layer(s_km_label_layer),
+                    GRect(W - 70, STATS_LABEL_Y - 1, 60, 18));
+    text_layer_set_font(s_steps_label_layer, s_font_small);
+    text_layer_set_font(s_km_label_layer, s_font_small);
+
+    layer_set_frame(text_layer_get_layer(s_steps_value_layer),
+                    large ? GRect(38, LARGE_STATS_Y + 6, 56, 26)
+                          : GRect(10, STATS_VALUE_Y, 60, 22));
+    text_layer_set_font(s_steps_value_layer, large ? s_font_stat_large : s_font_stat);
+    text_layer_set_text_color(s_steps_value_layer, GColorWhite);
+    text_layer_set_text_alignment(s_steps_value_layer, GTextAlignmentCenter);
+
+    layer_set_frame(text_layer_get_layer(s_hr_value_layer),
+                    large ? GRect(140, LARGE_STATS_Y + 6, 43, 26)
+                          : GRect(0, STATS_VALUE_Y, W, 22));
+    text_layer_set_font(s_hr_value_layer, large ? s_font_stat_large : s_font_stat);
+    text_layer_set_text_color(s_hr_value_layer, large ? red : GColorWhite);
+    text_layer_set_text_alignment(s_hr_value_layer,
+                                  large ? GTextAlignmentLeft : GTextAlignmentCenter);
+
+    layer_set_frame(text_layer_get_layer(s_dist_value_layer),
+                    GRect(W - 70, STATS_VALUE_Y, 60, 22));
+    text_layer_set_font(s_dist_value_layer, s_font_stat);
+    text_layer_set_text_color(s_dist_value_layer, GColorWhite);
+    text_layer_set_text_alignment(s_dist_value_layer, GTextAlignmentCenter);
+
+    layer_set_frame(text_layer_get_layer(s_temp_layer),
+                    GRect(65, LARGE_TOP_Y - 1, 46, 28));
+    text_layer_set_font(s_temp_layer, s_font_top);
+    text_layer_set_text_color(s_temp_layer, GColorWhite);
+    text_layer_set_text_alignment(s_temp_layer, GTextAlignmentLeft);
+
+    layer_set_frame(text_layer_get_layer(s_seconds_layer),
+                    GRect(164, LARGE_SECONDS_Y, 34, 24));
+    text_layer_set_font(s_seconds_layer, s_font_label);
+    text_layer_set_text_color(s_seconds_layer, GColorWhite);
+    text_layer_set_text_alignment(s_seconds_layer, GTextAlignmentLeft);
+
+    layer_set_frame(text_layer_get_layer(s_battery_value_layer),
+                    GRect(46, LARGE_BATTERY_Y + 4, 52, 24));
+    text_layer_set_font(s_battery_value_layer, s_font_label);
+    text_layer_set_text_color(s_battery_value_layer, green);
+    text_layer_set_text_alignment(s_battery_value_layer, GTextAlignmentLeft);
+
+    if (s_canvas_layer) {
+        layer_mark_dirty(s_canvas_layer);
+    }
+}
+
 static void main_window_load(Window *window) {
     Layer *root  = window_get_root_layer(window);
     GRect bounds = layer_get_bounds(root);
@@ -727,14 +997,18 @@ static void main_window_load(Window *window) {
 
     // 0. Load custom fonts (Atkinson Hyperlegible) from resources
     s_font_time  = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_56));
+    s_font_time_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_78));
+    s_font_top = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TOP_20));
     s_font_label = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
     s_font_stat  = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
+    s_font_stat_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_STAT_22));
     s_font_small = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_LABEL_14));
 
     // Load bitmap resources
     s_bolt_bitmap   = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_BOLT);
     s_bt_on_bitmap  = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_ON);
     s_bt_off_bitmap = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_OFF);
+    s_steps_bitmap  = gbitmap_create_with_resource(RESOURCE_ID_STEPS);
 
     // 1. Custom canvas covering the whole screen
     s_canvas_layer = layer_create(bounds);
@@ -800,8 +1074,20 @@ static void main_window_load(Window *window) {
     text_layer_set_text_alignment(s_dist_value_layer, GTextAlignmentCenter);
     layer_add_child(root, text_layer_get_layer(s_dist_value_layer));
 
-    // Battery percentage is now drawn directly in canvas_update_proc as part
-    // of the centered (icon + text) unit. No TextLayer needed.
+    s_temp_layer = text_layer_create(GRect(0, 0, 1, 1));
+    text_layer_set_background_color(s_temp_layer, GColorClear);
+    layer_add_child(root, text_layer_get_layer(s_temp_layer));
+
+    s_seconds_layer = text_layer_create(GRect(0, 0, 1, 1));
+    text_layer_set_background_color(s_seconds_layer, GColorClear);
+    layer_add_child(root, text_layer_get_layer(s_seconds_layer));
+
+    s_battery_value_layer = text_layer_create(GRect(0, 0, 1, 1));
+    text_layer_set_background_color(s_battery_value_layer, GColorClear);
+    layer_add_child(root, text_layer_get_layer(s_battery_value_layer));
+
+    // Apply the selected mode once all shared and large-mode layers exist.
+    apply_face_mode_layout(bounds);
 
     // Draw initial state
     update_time_and_date();
@@ -817,16 +1103,23 @@ static void main_window_unload(Window *window) {
     text_layer_destroy(s_steps_value_layer);
     text_layer_destroy(s_hr_value_layer);
     text_layer_destroy(s_dist_value_layer);
+    text_layer_destroy(s_temp_layer);
+    text_layer_destroy(s_seconds_layer);
+    text_layer_destroy(s_battery_value_layer);
     layer_destroy(s_canvas_layer);
 
     fonts_unload_custom_font(s_font_time);
+    fonts_unload_custom_font(s_font_time_large);
+    fonts_unload_custom_font(s_font_top);
     fonts_unload_custom_font(s_font_label);
     fonts_unload_custom_font(s_font_stat);
+    fonts_unload_custom_font(s_font_stat_large);
     fonts_unload_custom_font(s_font_small);
 
     if (s_bolt_bitmap)   gbitmap_destroy(s_bolt_bitmap);
     if (s_bt_on_bitmap)  gbitmap_destroy(s_bt_on_bitmap);
     if (s_bt_off_bitmap) gbitmap_destroy(s_bt_off_bitmap);
+    if (s_steps_bitmap)  gbitmap_destroy(s_steps_bitmap);
 }
 
 // =============================================================================
@@ -855,6 +1148,12 @@ static void init() {
     }
     if (persist_exists(PERSIST_KEY_WEATHER_INT)) {
         s_weather_interval_min = persist_read_int(PERSIST_KEY_WEATHER_INT);
+    }
+    if (persist_exists(PERSIST_KEY_FACE_MODE)) {
+        int mode = persist_read_int(PERSIST_KEY_FACE_MODE);
+        if (mode == FaceModeMinimal || mode == FaceModeLarger) {
+            s_face_mode = (FaceMode)mode;
+        }
     }
 
     // Treat startup as a recent "tap" so we don't immediately enter night-idle
@@ -892,6 +1191,7 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_NIGHT_START, s_night_start_hour);
     persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
     persist_write_int (PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
+    persist_write_int (PERSIST_KEY_FACE_MODE,   (int)s_face_mode);
     if (s_seconds_timeout_timer) app_timer_cancel(s_seconds_timeout_timer);
     if (s_seconds_tick_timer) app_timer_cancel(s_seconds_tick_timer);
     if (s_deferred_refresh_timer) app_timer_cancel(s_deferred_refresh_timer);
