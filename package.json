@@ -1,0 +1,86 @@
+{
+    "author": "Kombatant",
+    "dependencies": {},
+    "keywords": [],
+    "name": "pebble-inimal",
+    "pebble": {
+        "capabilities": [
+            "location",
+            "configurable",
+            "health"
+        ],
+        "displayName": "Pebble-inimal",
+        "enableMultiJS": true,
+        "messageKeys": [
+            "TEMPERATURE",
+            "REQUEST_WEATHER",
+            "WEATHER_CODE",
+            "NIGHT_MODE_ENABLED",
+            "NIGHT_START_HOUR",
+            "NIGHT_END_HOUR",
+            "WEATHER_INTERVAL"
+        ],
+        "projectType": "native",
+        "resources": {
+            "media": [
+                {
+                    "file": "fonts/Inter_24pt-SemiBold.ttf",
+                    "name": "FONT_TEXT_18",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
+                },
+                {
+                    "file": "fonts/Inter_24pt-SemiBold.ttf",
+                    "name": "FONT_LABEL_14",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
+                },
+                {
+                    "file": "images/battery_android_frame_bolt_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.PNG",
+                    "name": "BATTERY_BOLT",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "fonts/Rakuten Condensed Bold.ttf",
+                    "name": "FONT_TIME_56",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
+                },
+                {
+                    "file": "images/bluetooth_off.png",
+                    "name": "BLUETOOTH_OFF",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/bluetooth_on.png",
+                    "name": "BLUETOOTH_ON",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                }
+            ]
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "emery"
+        ],
+        "uuid": "5ed8a682-ac74-416a-8042-6bdb134a4269",
+        "watchapp": {
+            "watchface": true
+        }
+    },
+    "version": "0.2.0"
+}
