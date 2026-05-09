@@ -483,6 +483,9 @@ static void update_health_data() {
 // Bluetooth / connection service
 // =============================================================================
 static void connection_callback(bool connected) {
+    if (connected != s_bt_connected) {
+        vibes_short_pulse();
+    }
     s_bt_connected = connected;
     if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
 }
@@ -816,10 +819,10 @@ static void init() {
     tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
     battery_state_service_subscribe(battery_callback);
     accel_tap_service_subscribe(accel_tap_handler);
+    s_bt_connected = connection_service_peek_pebble_app_connection();
     connection_service_subscribe((ConnectionHandlers){
         .pebble_app_connection_handler = connection_callback
     });
-    s_bt_connected = connection_service_peek_pebble_app_connection();
 
     app_message_register_inbox_received(inbox_received_callback);
     app_message_register_inbox_dropped(inbox_dropped_callback);
