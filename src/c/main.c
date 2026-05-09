@@ -84,8 +84,11 @@ static int s_displayed_seconds = 0;
 // seconds for a short window roughly matching the backlight duration, then
 // freeze the displayed value until the next minute change.
 static bool s_seconds_active = false;
-static AppTimer *s_seconds_timer = NULL;
+static AppTimer *s_seconds_timeout_timer = NULL;
+static AppTimer *s_seconds_tick_timer = NULL;
+static AppTimer *s_deferred_refresh_timer = NULL;
 #define SECONDS_DURATION_MS 3500
+#define SECONDS_POLL_MS 200
 
 // State
 static int s_battery_level = 100;
@@ -407,13 +410,17 @@ static void render_time(void) {
     text_layer_set_text(s_time_layer, s_time_buffer);
 }
 
-static void update_time_and_date() {
-    time_t now_t = time(NULL);
-    struct tm *now = localtime(&now_t);
-
+static void update_time_from_tm(struct tm *now, bool update_seconds) {
     s_displayed_hour = now->tm_hour;
     s_displayed_min  = now->tm_min;
+    if (update_seconds) {
+        s_displayed_seconds = now->tm_sec;
+    }
     render_time();
+}
+
+static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
+    update_time_from_tm(now, update_seconds);
 
     char day_buf[3], wday_buf[6];
     strftime(day_buf,  sizeof(day_buf),  "%d", now);
@@ -426,6 +433,13 @@ static void update_time_and_date() {
                  "%s %s.  |  --\u00B0C", day_buf, wday_buf);
     }
     text_layer_set_text(s_date_layer, s_date_buffer);
+}
+
+static void update_time_and_date() {
+    time_t now_t = time(NULL);
+    struct tm *now = localtime(&now_t);
+
+    update_time_and_date_from_tm(now, false);
 }
 
 static void update_health_data() {
@@ -546,57 +560,96 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
         }
     }
 
-    // Per-second updates only fire while we're subscribed to SECOND_UNIT
-    // (accel-tap path). When we drop back to MINUTE_UNIT the displayed value
-    // freezes because render_time() isn't called again until the next minute.
-    if (units_changed & SECOND_UNIT) {
-        s_displayed_seconds = tick_time->tm_sec;
-        render_time();
-    }
+    // On-demand seconds are driven by a short app timer while the watch is
+    // awake. Keeping the system tick service on MINUTE_UNIT avoids churn in
+    // tick subscriptions during accel wake.
 }
 
 // =============================================================================
 // On-demand seconds: react to wrist-flicks like the backlight does
 // =============================================================================
+static void seconds_tick_handler(void *context);
+
+static void refresh_active_seconds(void) {
+    time_t now_t = time(NULL);
+    struct tm *now = localtime(&now_t);
+    if (now->tm_hour != s_displayed_hour ||
+        now->tm_min  != s_displayed_min  ||
+        now->tm_sec  != s_displayed_seconds) {
+        update_time_from_tm(now, true);
+    }
+}
+
+static void schedule_seconds_tick(void) {
+    if (s_seconds_active && !s_seconds_tick_timer) {
+        s_seconds_tick_timer = app_timer_register(
+            SECONDS_POLL_MS, seconds_tick_handler, NULL);
+    }
+}
+
+static void seconds_tick_handler(void *context) {
+    s_seconds_tick_timer = NULL;
+    if (!s_seconds_active) {
+        return;
+    }
+
+    refresh_active_seconds();
+    schedule_seconds_tick();
+}
+
 static void seconds_timeout_handler(void *context) {
     // Backlight is presumed off now. Stop per-second updates, but leave the
     // last displayed seconds value frozen on screen until the next minute.
     s_seconds_active = false;
-    s_seconds_timer  = NULL;
-    tick_timer_service_unsubscribe();
-    tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
+    s_seconds_timeout_timer = NULL;
+    if (s_seconds_tick_timer) {
+        app_timer_cancel(s_seconds_tick_timer);
+        s_seconds_tick_timer = NULL;
+    }
+}
+
+static void deferred_refresh_handler(void *context) {
+    s_deferred_refresh_timer = NULL;
+    update_health_data();
 }
 
 static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
+    time_t now_t = time(NULL);
+    struct tm *now = localtime(&now_t);
+
     // Record this tap so the night-idle gate knows the wrist just moved.
-    s_last_tap_time = time(NULL);
+    s_last_tap_time = now_t;
 
-    // If the watchface was in night-idle, the displayed HH:MM (and stats)
-    // could be up to 5 minutes stale. Refresh immediately so the user sees
-    // the correct time the moment they look at the watch.
-    update_time_and_date();
-    update_health_data();
-
+    // If the watchface was in night-idle, the displayed HH:MM could be up to
+    // 5 minutes stale. Refresh immediately so the user sees the correct time
+    // the moment they look at the watch.
     if (!s_seconds_active) {
         s_seconds_active = true;
-        tick_timer_service_unsubscribe();
-        tick_timer_service_subscribe(SECOND_UNIT, tick_handler);
-
-        // Show the current seconds immediately so the user doesn't have to
-        // wait up to a second for the first update.
-        time_t now_t = time(NULL);
-        struct tm *now = localtime(&now_t);
-        s_displayed_seconds = now->tm_sec;
-        render_time();
     }
+
+    // Show fresh seconds on every tap. Multiple accel taps can arrive while
+    // seconds are already active; repainting with cached seconds would make
+    // the display appear to skip a second on the next tick.
+    update_time_and_date_from_tm(now, true);
 
     // Reset the auto-shutoff timer on every tap (gives extended viewing if
     // the user keeps moving their wrist).
-    if (s_seconds_timer) {
-        app_timer_reschedule(s_seconds_timer, SECONDS_DURATION_MS);
+    if (s_seconds_timeout_timer) {
+        app_timer_reschedule(s_seconds_timeout_timer, SECONDS_DURATION_MS);
     } else {
-        s_seconds_timer = app_timer_register(SECONDS_DURATION_MS,
-                                             seconds_timeout_handler, NULL);
+        s_seconds_timeout_timer = app_timer_register(
+            SECONDS_DURATION_MS, seconds_timeout_handler, NULL);
+    }
+    schedule_seconds_tick();
+
+    // Health queries can be slow enough to delay tick delivery on some
+    // watches. Keep the active seconds window focused on time rendering, then
+    // refresh stats after seconds freeze again.
+    if (s_deferred_refresh_timer) {
+        app_timer_reschedule(s_deferred_refresh_timer, SECONDS_DURATION_MS + 250);
+    } else {
+        s_deferred_refresh_timer = app_timer_register(
+            SECONDS_DURATION_MS + 250, deferred_refresh_handler, NULL);
     }
 }
 
@@ -839,7 +892,9 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_NIGHT_START, s_night_start_hour);
     persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
     persist_write_int (PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
-    if (s_seconds_timer) app_timer_cancel(s_seconds_timer);
+    if (s_seconds_timeout_timer) app_timer_cancel(s_seconds_timeout_timer);
+    if (s_seconds_tick_timer) app_timer_cancel(s_seconds_tick_timer);
+    if (s_deferred_refresh_timer) app_timer_cancel(s_deferred_refresh_timer);
     accel_tap_service_unsubscribe();
     connection_service_unsubscribe();
     window_destroy(s_main_window);
