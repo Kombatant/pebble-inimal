@@ -42,10 +42,10 @@
 // Larger mode layout, scaled to Emery's 200x228 display.
 #define LARGE_TOP_Y          15
 #define LARGE_DIVIDER_Y      46
-#define LARGE_TIME_Y         44
+#define LARGE_TIME_Y         40
 #define LARGE_TIME_H         78
 #define LARGE_SECONDS_X      163
-#define LARGE_SECONDS_Y      66
+#define LARGE_SECONDS_Y      (LARGE_TIME_Y + 22)
 #define LARGE_STATS_Y        138
 #define LARGE_STATS_H        38
 #define LARGE_BATTERY_Y      190
@@ -263,12 +263,90 @@ static void draw_weather_icon(GContext *ctx, int cx, int cy, int code) {
     draw_sun_cloud(ctx, cx, cy);
 }
 
-static void draw_weather_icon_small(GContext *ctx, int cx, int cy, int code) {
-    if (code == 0) {
-        draw_sun_only(ctx, cx, cy);
-        return;
+static void draw_sun_only_small(GContext *ctx, int cx, int cy) {
+    GColor sun = COLOR_FALLBACK(GColorYellow, GColorWhite);
+    graphics_context_set_fill_color(ctx, sun);
+    graphics_fill_circle(ctx, GPoint(cx, cy), 6);
+
+    graphics_context_set_stroke_color(ctx, sun);
+    graphics_context_set_stroke_width(ctx, 2);
+    int ri = 8, ro = 11;
+    int di = (ri * 707) / 1000;
+    int doo = (ro * 707) / 1000;
+    graphics_draw_line(ctx, GPoint(cx,      cy - ri), GPoint(cx,      cy - ro));
+    graphics_draw_line(ctx, GPoint(cx,      cy + ri), GPoint(cx,      cy + ro));
+    graphics_draw_line(ctx, GPoint(cx - ri, cy),      GPoint(cx - ro, cy));
+    graphics_draw_line(ctx, GPoint(cx + ri, cy),      GPoint(cx + ro, cy));
+    graphics_draw_line(ctx, GPoint(cx + di, cy + di), GPoint(cx + doo, cy + doo));
+    graphics_draw_line(ctx, GPoint(cx - di, cy + di), GPoint(cx - doo, cy + doo));
+    graphics_draw_line(ctx, GPoint(cx + di, cy - di), GPoint(cx + doo, cy - doo));
+    graphics_draw_line(ctx, GPoint(cx - di, cy - di), GPoint(cx - doo, cy - doo));
+    graphics_context_set_stroke_width(ctx, 1);
+}
+
+static void draw_sun_cloud_small(GContext *ctx, int cx, int cy) {
+    graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
+    graphics_fill_circle(ctx, GPoint(cx + 8, cy - 7), 6);
+
+    graphics_context_set_fill_color(ctx, GColorWhite);
+    graphics_fill_circle(ctx, GPoint(cx - 10, cy + 3), 7);
+    graphics_fill_circle(ctx, GPoint(cx,       cy - 1), 9);
+    graphics_fill_circle(ctx, GPoint(cx + 10,  cy + 3), 7);
+    graphics_fill_rect  (ctx, GRect(cx - 14, cy + 2, 29, 7), 3, GCornersBottom);
+}
+
+static void draw_rain_small(GContext *ctx, int cx, int cy) {
+    draw_cloud_only_small(ctx, cx, cy - 3, GColorWhite);
+    graphics_context_set_stroke_color(ctx, COLOR_FALLBACK(GColorVividCerulean, GColorWhite));
+    graphics_context_set_stroke_width(ctx, 2);
+    graphics_draw_line(ctx, GPoint(cx - 7, cy + 9),  GPoint(cx - 9, cy + 13));
+    graphics_draw_line(ctx, GPoint(cx,     cy + 10), GPoint(cx - 2, cy + 14));
+    graphics_draw_line(ctx, GPoint(cx + 7, cy + 9),  GPoint(cx + 5, cy + 13));
+    graphics_context_set_stroke_width(ctx, 1);
+}
+
+static void draw_snow_small(GContext *ctx, int cx, int cy) {
+    draw_cloud_only_small(ctx, cx, cy - 3, GColorWhite);
+    graphics_context_set_fill_color(ctx, GColorWhite);
+    graphics_fill_circle(ctx, GPoint(cx - 7, cy + 11), 2);
+    graphics_fill_circle(ctx, GPoint(cx,     cy + 13), 2);
+    graphics_fill_circle(ctx, GPoint(cx + 7, cy + 11), 2);
+}
+
+static void draw_thunderstorm_small(GContext *ctx, int cx, int cy) {
+    draw_cloud_only_small(ctx, cx, cy - 3, COLOR_FALLBACK(GColorLightGray, GColorWhite));
+    GPathInfo bolt = {
+        .num_points = 5,
+        .points = (GPoint[]) {
+            { (int16_t)(cx + 1), (int16_t)(cy + 6)  },
+            { (int16_t)(cx - 4), (int16_t)(cy + 11) },
+            { (int16_t)(cx),     (int16_t)(cy + 11) },
+            { (int16_t)(cx - 3), (int16_t)(cy + 15) },
+            { (int16_t)(cx + 4), (int16_t)(cy + 9)  }
+        }
+    };
+    GPath *p = gpath_create(&bolt);
+    if (p) {
+        graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
+        gpath_draw_filled(ctx, p);
+        gpath_destroy(p);
     }
-    draw_cloud_only_small(ctx, cx, cy, GColorWhite);
+}
+
+static void draw_weather_icon_small(GContext *ctx, int cx, int cy, int code) {
+    if (code < 0)             { draw_sun_cloud_small(ctx, cx, cy); return; }
+    if (code == 0)            { draw_sun_only_small(ctx, cx, cy); return; }
+    if (code <= 2)            { draw_sun_cloud_small(ctx, cx, cy); return; }
+    if (code == 3)            { draw_cloud_only_small(ctx, cx, cy, GColorWhite); return; }
+    if (code >= 45 && code <= 48) {
+        draw_cloud_only_small(ctx, cx, cy, COLOR_FALLBACK(GColorLightGray, GColorWhite)); return;
+    }
+    if (code >= 51 && code <= 67) { draw_rain_small(ctx, cx, cy); return; }
+    if (code >= 71 && code <= 77) { draw_snow_small(ctx, cx, cy); return; }
+    if (code >= 80 && code <= 82) { draw_rain_small(ctx, cx, cy); return; }
+    if (code >= 85 && code <= 86) { draw_snow_small(ctx, cx, cy); return; }
+    if (code >= 95)               { draw_thunderstorm_small(ctx, cx, cy); return; }
+    draw_sun_cloud_small(ctx, cx, cy);
 }
 
 static void draw_heart(GContext *ctx, int cx, int cy, GColor color) {
@@ -367,7 +445,7 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
 // =============================================================================
 static void draw_larger_canvas(GContext *ctx, int W, int H) {
     GColor dim = GColorDarkGray;
-    GColor red = COLOR_FALLBACK(GColorRed, GColorWhite);
+    GColor red = COLOR_FALLBACK(GColorMelon, GColorWhite);
     GColor green = COLOR_FALLBACK(GColorGreen, GColorWhite);
 
     draw_tick_marks(ctx, W, H);
@@ -379,8 +457,8 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
 
     graphics_context_set_stroke_color(ctx, dim);
     graphics_context_set_stroke_width(ctx, 2);
-    graphics_draw_line(ctx, GPoint(LARGE_SECONDS_X - 5, LARGE_TIME_Y + 3),
-                       GPoint(LARGE_SECONDS_X - 5, LARGE_TIME_Y + LARGE_TIME_H - 6));
+    graphics_draw_line(ctx, GPoint(LARGE_SECONDS_X - 5, LARGE_TIME_Y + 20),
+                       GPoint(LARGE_SECONDS_X - 5, LARGE_TIME_Y + LARGE_TIME_H));
 
     graphics_draw_round_rect(ctx, GRect(10, LARGE_STATS_Y, 86, LARGE_STATS_H), 6);
     graphics_draw_round_rect(ctx, GRect(104, LARGE_STATS_Y, 86, LARGE_STATS_H), 6);
@@ -396,7 +474,7 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
 
     GBitmap *bt = s_bt_connected ? s_bt_on_bitmap : s_bt_off_bitmap;
     if (bt) {
-        graphics_draw_bitmap_in_rect(ctx, bt, GRect(168, 100, 24, 24));
+        graphics_draw_bitmap_in_rect(ctx, bt, GRect(167, LARGE_SECONDS_Y + 34, 24, 24));
     }
 
     if (s_bolt_bitmap) {
@@ -915,7 +993,7 @@ static void apply_face_mode_layout(GRect bounds) {
     const int W = bounds.size.w;
     const bool large = (s_face_mode == FaceModeLarger);
     GColor green = COLOR_FALLBACK(GColorGreen, GColorWhite);
-    GColor red = COLOR_FALLBACK(GColorRed, GColorWhite);
+    GColor red = COLOR_FALLBACK(GColorMelon, GColorWhite);
 
     layer_set_frame(text_layer_get_layer(s_date_layer),
                     large ? GRect(106, LARGE_TOP_Y - 1, 78, 28)
@@ -974,10 +1052,10 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_text_alignment(s_temp_layer, GTextAlignmentLeft);
 
     layer_set_frame(text_layer_get_layer(s_seconds_layer),
-                    GRect(164, LARGE_SECONDS_Y, 34, 24));
+                    GRect(159, LARGE_SECONDS_Y, 41, 24));
     text_layer_set_font(s_seconds_layer, s_font_label);
     text_layer_set_text_color(s_seconds_layer, GColorWhite);
-    text_layer_set_text_alignment(s_seconds_layer, GTextAlignmentLeft);
+    text_layer_set_text_alignment(s_seconds_layer, GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_battery_value_layer),
                     GRect(46, LARGE_BATTERY_Y + 4, 52, 24));
