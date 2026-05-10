@@ -82,7 +82,7 @@
                 },
                 {
                     "file": "fonts/Rakuten Condensed Bold.ttf",
-                    "name": "FONT_TIME_78",
+                    "name": "FONT_TIME_72",
                     "targetPlatforms": [
                         "emery"
                     ],
@@ -123,5 +123,5 @@
             "watchface": true
         }
     },
-    "version": "0.5.5"
+    "version": "0.5.6"
 }

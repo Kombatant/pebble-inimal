@@ -40,21 +40,33 @@
 #define BAR_WIDTH        160     // centered: x = (200-160)/2 = 20
 
 // Larger mode layout, scaled to Emery's 200x228 display.
-//   top row    : 12 .. 38   (weather icon cy=24, temp/date text)
-//   divider 1  : 44
-//   clock band : 52 .. 124  (height 72, font 64)
-//   stats band : 132 .. 176 (height 44)
-//   battery    : 188 .. 216
-#define LARGE_TOP_Y          12
-#define LARGE_DIVIDER_Y      44
-#define LARGE_TIME_Y         46
-#define LARGE_TIME_H         72
-#define LARGE_SECONDS_X      158
-#define LARGE_SECONDS_Y      (LARGE_TIME_Y + 16)
-#define LARGE_STATS_Y        132
-#define LARGE_STATS_H        44
-#define LARGE_BATTERY_Y      188
-#define LARGE_BATTERY_BAR_Y  198
+// One explicit grid keeps the mockup-like proportions from drifting.
+#define LARGE_INSET             14
+#define LARGE_CONTENT_LEFT      16
+#define LARGE_CONTENT_RIGHT     184
+#define LARGE_TOP_Y             10
+#define LARGE_TOP_H             30
+#define LARGE_DIVIDER_Y         44
+#define LARGE_TIME_Y            44
+#define LARGE_TIME_H            106
+#define LARGE_TIME_X            10
+#define LARGE_TIME_W            144
+#define LARGE_STATUS_DIVIDER_X  158
+#define LARGE_STATUS_DIVIDER_TOP 52
+#define LARGE_STATUS_DIVIDER_BOTTOM 126
+#define LARGE_STATUS_CENTER_X   176
+#define LARGE_SECONDS_Y         52
+#define LARGE_STATUS_ICON_Y     94
+#define LARGE_STATS_Y           132
+#define LARGE_STATS_H           44
+#define LARGE_STAT_CENTER_Y     (LARGE_STATS_Y + LARGE_STATS_H / 2)
+#define LARGE_CARD_W            82
+#define LARGE_CARD_GAP          8
+#define LARGE_LEFT_CARD_X       LARGE_INSET
+#define LARGE_RIGHT_CARD_X      (LARGE_LEFT_CARD_X + LARGE_CARD_W + LARGE_CARD_GAP)
+#define LARGE_BATTERY_Y         184
+#define LARGE_BATTERY_BAR_Y     198
+#define LARGE_BATTERY_BAR_H     8
 
 // ---------- Globals -----------------------------------------------------------
 static Window *s_main_window;
@@ -456,43 +468,48 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
     GColor green = COLOR_FALLBACK(GColorScreaminGreen, GColorWhite);
 
     draw_tick_marks(ctx, W, H);
-    draw_weather_icon_small(ctx, 24, 24, s_weather_code);
+    draw_weather_icon_small(ctx, 25, 24, s_weather_code);
 
     graphics_context_set_stroke_color(ctx, dim);
     graphics_context_set_stroke_width(ctx, 1);
-    graphics_draw_line(ctx, GPoint(12, LARGE_DIVIDER_Y), GPoint(W - 12, LARGE_DIVIDER_Y));
+    graphics_draw_line(ctx, GPoint(LARGE_CONTENT_LEFT, LARGE_DIVIDER_Y),
+                       GPoint(LARGE_CONTENT_RIGHT, LARGE_DIVIDER_Y));
 
     graphics_context_set_stroke_color(ctx, dim);
     graphics_context_set_stroke_width(ctx, 2);
-    graphics_draw_line(ctx, GPoint(LARGE_SECONDS_X, LARGE_TIME_Y + 6),
-                       GPoint(LARGE_SECONDS_X, LARGE_TIME_Y + LARGE_TIME_H - 6));
+    graphics_draw_line(ctx, GPoint(LARGE_STATUS_DIVIDER_X, LARGE_STATUS_DIVIDER_TOP),
+                       GPoint(LARGE_STATUS_DIVIDER_X, LARGE_STATUS_DIVIDER_BOTTOM));
 
-    graphics_draw_round_rect(ctx, GRect(8, LARGE_STATS_Y, 88, LARGE_STATS_H), 6);
-    graphics_draw_round_rect(ctx, GRect(104, LARGE_STATS_Y, 88, LARGE_STATS_H), 6);
+    graphics_draw_round_rect(ctx, GRect(LARGE_LEFT_CARD_X, LARGE_STATS_Y,
+                                        LARGE_CARD_W, LARGE_STATS_H), 6);
+    graphics_draw_round_rect(ctx, GRect(LARGE_RIGHT_CARD_X, LARGE_STATS_Y,
+                                        LARGE_CARD_W, LARGE_STATS_H), 6);
     graphics_context_set_stroke_width(ctx, 1);
 
     graphics_context_set_compositing_mode(ctx, GCompOpSet);
     if (s_steps_bitmap) {
         graphics_draw_bitmap_in_rect(ctx, s_steps_bitmap,
-                                     GRect(14, LARGE_STATS_Y + 10, 24, 24));
+                                     GRect(LARGE_LEFT_CARD_X + 8, LARGE_STAT_CENTER_Y - 12, 24, 24));
     }
 
-    draw_heart_large(ctx, 122, LARGE_STATS_Y + 22, red);
+    draw_heart_large(ctx, LARGE_RIGHT_CARD_X + 20, LARGE_STAT_CENTER_Y - 2, red);
 
     GBitmap *bt = s_bt_connected ? s_bt_on_bitmap : s_bt_off_bitmap;
     if (bt) {
         graphics_draw_bitmap_in_rect(ctx, bt,
-                                     GRect(LARGE_SECONDS_X + 8, LARGE_TIME_Y + LARGE_TIME_H - 30, 24, 24));
+                                     GRect(LARGE_STATUS_CENTER_X - 12, LARGE_STATUS_ICON_Y, 24, 24));
     }
 
     if (s_bolt_bitmap) {
         graphics_draw_bitmap_in_rect(ctx, s_bolt_bitmap,
-                                     GRect(14, LARGE_BATTERY_BAR_Y - 10, 24, 24));
+                                     GRect(LARGE_LEFT_CARD_X + 8,
+                                           LARGE_BATTERY_BAR_Y + LARGE_BATTERY_BAR_H / 2 - 12,
+                                           24, 24));
     }
 
-    const int bar_x = 104;
-    const int bar_w = 88;
-    const int bar_h = 8;
+    const int bar_x = LARGE_RIGHT_CARD_X;
+    const int bar_w = LARGE_CARD_W;
+    const int bar_h = LARGE_BATTERY_BAR_H;
     graphics_context_set_fill_color(ctx, GColorDarkGray);
     graphics_fill_rect(ctx, GRect(bar_x, LARGE_BATTERY_BAR_Y, bar_w, bar_h),
                        bar_h / 2, GCornersAll);
@@ -1004,7 +1021,7 @@ static void apply_face_mode_layout(GRect bounds) {
     GColor red = COLOR_FALLBACK(GColorMelon, GColorWhite);
 
     layer_set_frame(text_layer_get_layer(s_date_layer),
-                    large ? GRect(W - 90, LARGE_TOP_Y, 78, 26)
+                    large ? GRect(104, LARGE_TOP_Y, 80, LARGE_TOP_H)
                           : GRect(0, DATE_ROW_Y, W, 22));
     text_layer_set_font(s_date_layer, large ? s_font_top : s_font_label);
     text_layer_set_text_color(s_date_layer, GColorWhite);
@@ -1012,7 +1029,7 @@ static void apply_face_mode_layout(GRect bounds) {
                                   large ? GTextAlignmentRight : GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_time_layer),
-                    large ? GRect(4, LARGE_TIME_Y, 152, LARGE_TIME_H)
+                    large ? GRect(LARGE_TIME_X, LARGE_TIME_Y, LARGE_TIME_W, LARGE_TIME_H)
                           : GRect(0, TIME_Y, W, 58));
     text_layer_set_font(s_time_layer, large ? s_font_time_large : s_font_time);
     text_layer_set_text_color(s_time_layer, GColorWhite);
@@ -1033,7 +1050,7 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_font(s_km_label_layer, s_font_small);
 
     layer_set_frame(text_layer_get_layer(s_steps_value_layer),
-                    large ? GRect(42, LARGE_STATS_Y + 7, 50, 26)
+                    large ? GRect(50, LARGE_STATS_Y + 5, 44, 32)
                           : GRect(10, STATS_VALUE_Y, 60, 22));
     text_layer_set_font(s_steps_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_steps_value_layer, GColorWhite);
@@ -1041,7 +1058,7 @@ static void apply_face_mode_layout(GRect bounds) {
                                   large ? GTextAlignmentLeft : GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_hr_value_layer),
-                    large ? GRect(138, LARGE_STATS_Y + 7, 50, 26)
+                    large ? GRect(146, LARGE_STATS_Y + 5, 38, 32)
                           : GRect(0, STATS_VALUE_Y, W, 22));
     text_layer_set_font(s_hr_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_hr_value_layer, large ? red : GColorWhite);
@@ -1055,20 +1072,20 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_text_alignment(s_dist_value_layer, GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_temp_layer),
-                    GRect(42, LARGE_TOP_Y, 60, 26));
+                    GRect(48, LARGE_TOP_Y, 56, LARGE_TOP_H));
     text_layer_set_font(s_temp_layer, s_font_top);
     text_layer_set_text_color(s_temp_layer, GColorWhite);
     text_layer_set_text_alignment(s_temp_layer, GTextAlignmentLeft);
 
     layer_set_frame(text_layer_get_layer(s_seconds_layer),
-                    GRect(LARGE_SECONDS_X + 4, LARGE_SECONDS_Y, 36, 24));
+                    GRect(LARGE_STATUS_CENTER_X - 16, LARGE_SECONDS_Y, 32, 28));
     text_layer_set_font(s_seconds_layer, s_font_label);
     text_layer_set_text_color(s_seconds_layer, GColorWhite);
     text_layer_set_text_alignment(s_seconds_layer, GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_battery_value_layer),
-                    GRect(42, LARGE_BATTERY_BAR_Y - 12, 56, 24));
-    text_layer_set_font(s_battery_value_layer, s_font_label);
+                    GRect(50, LARGE_BATTERY_Y, 50, 32));
+    text_layer_set_font(s_battery_value_layer, s_font_stat_large);
     text_layer_set_text_color(s_battery_value_layer, green);
     text_layer_set_text_alignment(s_battery_value_layer, GTextAlignmentLeft);
 
@@ -1084,7 +1101,7 @@ static void main_window_load(Window *window) {
 
     // 0. Load custom fonts (Atkinson Hyperlegible) from resources
     s_font_time  = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_56));
-    s_font_time_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_64));
+    s_font_time_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_72));
     s_font_top = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TOP_20));
     s_font_label = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
     s_font_stat  = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
