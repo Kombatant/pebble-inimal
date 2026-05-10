@@ -468,13 +468,13 @@ static GBitmap *get_battery_bitmap(void) {
     if (s_battery_is_charging && s_battery_charging_bitmap) {
         return s_battery_charging_bitmap;
     }
-    if (s_battery_level >= 100 && s_battery_full_bitmap) {
+    if (s_battery_level > 75 && s_battery_full_bitmap) {
         return s_battery_full_bitmap;
     }
-    if (s_battery_level >= 75 && s_battery_75_bitmap) {
+    if (s_battery_level > 50 && s_battery_75_bitmap) {
         return s_battery_75_bitmap;
     }
-    if (s_battery_level >= 50 && s_battery_50_bitmap) {
+    if (s_battery_level > 25 && s_battery_50_bitmap) {
         return s_battery_50_bitmap;
     }
     return s_battery_25_bitmap;
