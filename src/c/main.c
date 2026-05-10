@@ -47,16 +47,16 @@
 #define LARGE_TOP_Y             10
 #define LARGE_TOP_H             30
 #define LARGE_DIVIDER_Y         44
-#define LARGE_TIME_Y            44
+#define LARGE_TIME_Y            40
 #define LARGE_TIME_H            106
 #define LARGE_TIME_X            06
 #define LARGE_TIME_W            154
 #define LARGE_STATUS_DIVIDER_X  158
 #define LARGE_STATUS_DIVIDER_TOP 52
-#define LARGE_STATUS_DIVIDER_BOTTOM 126
+#define LARGE_STATUS_DIVIDER_BOTTOM 122
 #define LARGE_STATUS_CENTER_X   176
 #define LARGE_SECONDS_Y         60
-#define LARGE_STATUS_ICON_Y     94
+#define LARGE_STATUS_ICON_Y     90
 #define LARGE_STATS_Y           132
 #define LARGE_STATS_H           44
 #define LARGE_STAT_CENTER_Y     (LARGE_STATS_Y + LARGE_STATS_H / 2)
