@@ -525,7 +525,7 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
                                      GRect(LARGE_LEFT_CARD_X + 8, LARGE_STAT_CENTER_Y - 12, 24, 24));
     }
 
-    draw_heart_large(ctx, LARGE_RIGHT_CARD_X + 20, LARGE_STAT_CENTER_Y - 2, red);
+    draw_heart_large(ctx, LARGE_RIGHT_CARD_X + 20, LARGE_STAT_CENTER_Y, red);
 
     GBitmap *bt = s_bt_connected ? s_bt_on_bitmap : s_bt_off_bitmap;
     if (bt) {
@@ -1183,7 +1183,7 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_font(s_km_label_layer, s_font_small);
 
     layer_set_frame(text_layer_get_layer(s_steps_value_layer),
-                    large ? GRect(50, LARGE_STATS_Y + 5, 44, 32)
+                    large ? GRect(50, LARGE_STATS_Y + 8, 44, 32)
                           : GRect(10, STATS_VALUE_Y, 60, 22));
     text_layer_set_font(s_steps_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_steps_value_layer, GColorWhite);
@@ -1191,7 +1191,7 @@ static void apply_face_mode_layout(GRect bounds) {
                                   large ? GTextAlignmentLeft : GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_hr_value_layer),
-                    large ? GRect(146, LARGE_STATS_Y + 5, 38, 32)
+                    large ? GRect(146, LARGE_STATS_Y + 8, 38, 32)
                           : GRect(0, STATS_VALUE_Y, W, 22));
     text_layer_set_font(s_hr_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_hr_value_layer, large ? red : GColorWhite);
@@ -1217,7 +1217,7 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_text_alignment(s_seconds_layer, GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_battery_value_layer),
-                    GRect(50, LARGE_BATTERY_Y, 50, 32));
+                    GRect(50, LARGE_BATTERY_Y + 4, 50, 32));
     text_layer_set_font(s_battery_value_layer, s_font_stat_large);
     text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
     text_layer_set_text_alignment(s_battery_value_layer, GTextAlignmentLeft);
