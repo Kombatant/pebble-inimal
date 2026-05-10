@@ -19,7 +19,10 @@
             "NIGHT_START_HOUR",
             "NIGHT_END_HOUR",
             "WEATHER_INTERVAL",
-            "FACE_MODE"
+            "FACE_MODE",
+            "REQUEST_BATTERY_INFO",
+            "BATTERY_ESTIMATE",
+            "BATTERY_RATE_MILLI"
         ],
         "projectType": "native",
         "resources": {
@@ -155,5 +158,5 @@
             "watchface": true
         }
     },
-    "version": "0.6.0"
+    "version": "0.7.0"
 }

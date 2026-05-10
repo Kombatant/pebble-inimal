@@ -58,6 +58,13 @@ Pebble.addEventListener('appmessage', function (e) {
     if (e.payload.REQUEST_WEATHER) {
         getWeather();
     }
+    if (typeof e.payload.BATTERY_ESTIMATE !== 'undefined') {
+        localStorage.setItem('batteryEstimate', String(e.payload.BATTERY_ESTIMATE));
+        localStorage.setItem('batteryRateMilli', String(e.payload.BATTERY_RATE_MILLI || 0));
+        localStorage.setItem('batteryUpdatedAt', String(Date.now()));
+        console.log('Battery info: ' + e.payload.BATTERY_ESTIMATE +
+                    ' (' + e.payload.BATTERY_RATE_MILLI + ' m%/h)');
+    }
 });
 
 // =============================================================================
@@ -126,6 +133,13 @@ var CONFIG_HTML =
 '<option value="360" __W360__>Every 6 hours</option>' +
 '</select></div>' +
 
+'<div class="field">' +
+'<label>Battery remaining</label>' +
+'<div class="desc" style="font-size:1em;color:#222;margin-top:4px">__BAT_EST__</div>' +
+'<div class="desc">Discharge rate: __BAT_RATE__ %/hour. ' +
+'Estimate is learned from your usage; allow a day of wear before it stabilizes.</div>' +
+'</div>' +
+
 '<button onclick="save()">Save</button>' +
 
 '<script>' +
@@ -156,8 +170,22 @@ function getStoredSettings() {
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
+function getBatteryDisplay() {
+    var est = localStorage.getItem('batteryEstimate');
+    var rateMilli = parseInt(localStorage.getItem('batteryRateMilli') || '0', 10);
+    var rateStr;
+    if (!rateMilli || rateMilli <= 0) {
+        rateStr = '—';
+    } else {
+        rateStr = (rateMilli / 1000).toFixed(2);
+    }
+    if (!est || est === '') est = '—';
+    return { est: est, rate: rateStr };
+}
+
 function buildConfigUrl() {
     var s = getStoredSettings();
+    var b = getBatteryDisplay();
     var html = CONFIG_HTML
         .replace('__NIGHT_CHECKED__',    s.nightMode ? 'checked' : '')
         .replace('__NIGHT_OPTS_CLASS__', s.nightMode ? '' : 'hidden')
@@ -169,11 +197,20 @@ function buildConfigUrl() {
         .replace('__W30__',  s.weather === 30  ? 'selected' : '')
         .replace('__W60__',  s.weather === 60  ? 'selected' : '')
         .replace('__W120__', s.weather === 120 ? 'selected' : '')
-        .replace('__W360__', s.weather === 360 ? 'selected' : '');
+        .replace('__W360__', s.weather === 360 ? 'selected' : '')
+        .replace('__BAT_EST__',  b.est)
+        .replace('__BAT_RATE__', b.rate);
     return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
 }
 
 Pebble.addEventListener('showConfiguration', function () {
+    // Ask watch for fresh estimate; it arrives async via 'appmessage'.
+    // The user sees cached values immediately and refreshed values on
+    // their next config-page open.
+    Pebble.sendAppMessage({ 'REQUEST_BATTERY_INFO': 1 },
+        function ()  { console.log('Battery info requested'); },
+        function (e) { console.log('Battery info request failed: ' + JSON.stringify(e)); }
+    );
     Pebble.openURL(buildConfigUrl());
 });
 

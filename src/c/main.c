@@ -158,14 +158,26 @@ static time_t s_last_tap_time      = 0;
 static time_t s_last_weather_fetch = 0;
 
 // Persistent storage keys
-#define PERSIST_KEY_TEMP         100
-#define PERSIST_KEY_TEMP_KNOWN   101
-#define PERSIST_KEY_WEATHER      102
-#define PERSIST_KEY_NIGHT_MODE   103
-#define PERSIST_KEY_WEATHER_INT  104
-#define PERSIST_KEY_NIGHT_START  105
-#define PERSIST_KEY_NIGHT_END    106
-#define PERSIST_KEY_FACE_MODE    107
+#define PERSIST_KEY_TEMP             100
+#define PERSIST_KEY_TEMP_KNOWN       101
+#define PERSIST_KEY_WEATHER          102
+#define PERSIST_KEY_NIGHT_MODE       103
+#define PERSIST_KEY_WEATHER_INT      104
+#define PERSIST_KEY_NIGHT_START      105
+#define PERSIST_KEY_NIGHT_END        106
+#define PERSIST_KEY_FACE_MODE        107
+#define PERSIST_KEY_BAT_LAST_PCT     108
+#define PERSIST_KEY_BAT_LAST_TS      109
+#define PERSIST_KEY_BAT_EWMA_MILLI   110
+#define PERSIST_KEY_BAT_EWMA_INIT    111
+
+// Battery life estimator state
+// EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
+// Sample acceptance: dt_hours in [0.05, 12.0] and dpct > 0.
+static uint8_t  s_bat_last_pct      = 0;
+static time_t   s_bat_last_ts       = 0;
+static int32_t  s_bat_ewma_milli    = 0;     // 0 == uninitialized
+static bool     s_bat_ewma_init     = false;
 
 // =============================================================================
 // Drawing helpers
@@ -798,7 +810,86 @@ static void connection_callback(bool connected) {
     if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
 }
 
+// Update EWMA discharge rate from a fresh battery reading.
+// Smoothing factor alpha = 0.2 (numerator 1, denom 5).
+static void battery_estimator_update(BatteryChargeState state) {
+    time_t now = time(NULL);
+
+    if (state.is_charging) {
+        // Freeze EWMA across a charge cycle. Reset only the dt anchor so the
+        // first post-charge sample doesn't span the charging window.
+        s_bat_last_pct = state.charge_percent;
+        s_bat_last_ts  = now;
+        return;
+    }
+
+    if (s_bat_last_ts == 0) {
+        // First reading after install: just anchor.
+        s_bat_last_pct = state.charge_percent;
+        s_bat_last_ts  = now;
+        return;
+    }
+
+    int32_t dt_sec = (int32_t)(now - s_bat_last_ts);
+    int32_t dpct   = (int32_t)s_bat_last_pct - (int32_t)state.charge_percent;
+
+    // Reject: noise floor (<3 min), no drop yet, or stale gap (>12 h).
+    if (dt_sec < 180 || dpct <= 0 || dt_sec > 12 * 3600) {
+        if (dpct < 0) {
+            // Battery rose without is_charging set (firmware glitch). Re-anchor.
+            s_bat_last_pct = state.charge_percent;
+            s_bat_last_ts  = now;
+        }
+        return;
+    }
+
+    // rate_milli = dpct * 1000 * 3600 / dt_sec  (avoids float)
+    int32_t rate_milli = (dpct * 3600 * 1000) / dt_sec;
+
+    if (!s_bat_ewma_init) {
+        s_bat_ewma_milli = rate_milli;
+        s_bat_ewma_init  = true;
+    } else {
+        // EWMA: new = alpha*rate + (1-alpha)*old, alpha = 1/5
+        s_bat_ewma_milli = (rate_milli + 4 * s_bat_ewma_milli) / 5;
+    }
+
+    s_bat_last_pct = state.charge_percent;
+    s_bat_last_ts  = now;
+
+    APP_LOG(APP_LOG_LEVEL_DEBUG,
+            "bat est: dpct=%d dt=%ds rate=%ld ewma=%ld",
+            (int)dpct, (int)dt_sec, (long)rate_milli, (long)s_bat_ewma_milli);
+}
+
+// Format current battery-life estimate into buf.
+// Produces "charging", "—", "Xd Yh", or "Yh Zm".
+static void battery_estimator_format(char *buf, size_t n) {
+    if (s_battery_is_charging) {
+        snprintf(buf, n, "charging");
+        return;
+    }
+    if (!s_bat_ewma_init || s_bat_ewma_milli <= 0) {
+        snprintf(buf, n, "—");
+        return;
+    }
+    // total_minutes = pct * 60 * 1000 / ewma_milli
+    int32_t total_min = ((int32_t)s_battery_level * 60 * 1000) / s_bat_ewma_milli;
+    if (total_min < 0) total_min = 0;
+
+    int days  = total_min / (60 * 24);
+    int hours = (total_min / 60) % 24;
+    int mins  = total_min % 60;
+
+    if (days > 0) {
+        snprintf(buf, n, "%dd %dh", days, hours);
+    } else {
+        snprintf(buf, n, "%dh %dm", hours, mins);
+    }
+}
+
 static void battery_callback(BatteryChargeState state) {
+    battery_estimator_update(state);
     s_battery_level = state.charge_percent;
     s_battery_is_charging = state.is_charging;
     snprintf(s_battery_text_buffer, sizeof(s_battery_text_buffer),
@@ -1020,6 +1111,18 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
                 update_health_data();
             }
             APP_LOG(APP_LOG_LEVEL_INFO, "Face mode: %d", v);
+        }
+    }
+
+    Tuple *bat_req = dict_find(iterator, MESSAGE_KEY_REQUEST_BATTERY_INFO);
+    if (bat_req) {
+        char est[24];
+        battery_estimator_format(est, sizeof(est));
+        DictionaryIterator *out;
+        if (app_message_outbox_begin(&out) == APP_MSG_OK) {
+            dict_write_cstring(out, MESSAGE_KEY_BATTERY_ESTIMATE, est);
+            dict_write_int32  (out, MESSAGE_KEY_BATTERY_RATE_MILLI, s_bat_ewma_milli);
+            app_message_outbox_send();
         }
     }
 }
@@ -1298,6 +1401,21 @@ static void init() {
         }
     }
 
+    // Restore battery estimator state across launches.
+    if (persist_exists(PERSIST_KEY_BAT_EWMA_INIT)) {
+        s_bat_ewma_init = persist_read_bool(PERSIST_KEY_BAT_EWMA_INIT);
+    }
+    if (persist_exists(PERSIST_KEY_BAT_EWMA_MILLI)) {
+        s_bat_ewma_milli = persist_read_int(PERSIST_KEY_BAT_EWMA_MILLI);
+        if (s_bat_ewma_milli <= 0) s_bat_ewma_init = false;
+    }
+    if (persist_exists(PERSIST_KEY_BAT_LAST_PCT)) {
+        s_bat_last_pct = (uint8_t)persist_read_int(PERSIST_KEY_BAT_LAST_PCT);
+    }
+    if (persist_exists(PERSIST_KEY_BAT_LAST_TS)) {
+        s_bat_last_ts = (time_t)persist_read_int(PERSIST_KEY_BAT_LAST_TS);
+    }
+
     // Treat startup as a recent "tap" so we don't immediately enter night-idle
     // (e.g., during a watch reboot at 3am).
     s_last_tap_time = time(NULL);
@@ -1334,6 +1452,10 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
     persist_write_int (PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
     persist_write_int (PERSIST_KEY_FACE_MODE,   (int)s_face_mode);
+    persist_write_int (PERSIST_KEY_BAT_LAST_PCT,   (int)s_bat_last_pct);
+    persist_write_int (PERSIST_KEY_BAT_LAST_TS,    (int)s_bat_last_ts);
+    persist_write_int (PERSIST_KEY_BAT_EWMA_MILLI, (int)s_bat_ewma_milli);
+    persist_write_bool(PERSIST_KEY_BAT_EWMA_INIT,  s_bat_ewma_init);
     if (s_seconds_timeout_timer) app_timer_cancel(s_seconds_timeout_timer);
     if (s_seconds_tick_timer) app_timer_cancel(s_seconds_tick_timer);
     if (s_deferred_refresh_timer) app_timer_cancel(s_deferred_refresh_timer);
