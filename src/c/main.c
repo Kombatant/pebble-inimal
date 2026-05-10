@@ -522,7 +522,7 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
     graphics_context_set_compositing_mode(ctx, GCompOpSet);
     if (s_steps_bitmap) {
         graphics_draw_bitmap_in_rect(ctx, s_steps_bitmap,
-                                     GRect(LARGE_LEFT_CARD_X + 8, LARGE_STAT_CENTER_Y - 12, 24, 24));
+                                     GRect(LARGE_LEFT_CARD_X + 3, LARGE_STAT_CENTER_Y - 12, 24, 24));
     }
 
     draw_heart_large(ctx, LARGE_RIGHT_CARD_X + 20, LARGE_STAT_CENTER_Y, red);
@@ -747,6 +747,9 @@ static void update_health_data() {
     } else {
         snprintf(s_steps_buffer, sizeof(s_steps_buffer), "--");
     }
+#ifdef DEBUG_LAYOUT
+    snprintf(s_steps_buffer, sizeof(s_steps_buffer), "29999");
+#endif
     text_layer_set_text(s_steps_value_layer, s_steps_buffer);
 
     // Distance today (meters → km, 2 decimals)
@@ -779,6 +782,9 @@ static void update_health_data() {
             snprintf(s_hr_buffer, sizeof(s_hr_buffer), "--");
         }
     }
+#ifdef DEBUG_LAYOUT
+    snprintf(s_hr_buffer, sizeof(s_hr_buffer), "199");
+#endif
     text_layer_set_text(s_hr_value_layer, s_hr_buffer);
 #else
     snprintf(s_steps_buffer, sizeof(s_steps_buffer), "--");
@@ -1183,7 +1189,7 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_font(s_km_label_layer, s_font_small);
 
     layer_set_frame(text_layer_get_layer(s_steps_value_layer),
-                    large ? GRect(50, LARGE_STATS_Y + 8, 44, 32)
+                    large ? GRect(42, LARGE_STATS_Y + 8, 50, 32)
                           : GRect(10, STATS_VALUE_Y, 60, 22));
     text_layer_set_font(s_steps_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_steps_value_layer, GColorWhite);
