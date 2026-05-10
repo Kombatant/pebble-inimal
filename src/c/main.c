@@ -93,7 +93,11 @@ static GFont s_font_stat_large;
 static GFont s_font_small;
 
 // Bitmaps loaded from resources
-static GBitmap *s_bolt_bitmap;
+static GBitmap *s_battery_full_bitmap;
+static GBitmap *s_battery_charging_bitmap;
+static GBitmap *s_battery_75_bitmap;
+static GBitmap *s_battery_50_bitmap;
+static GBitmap *s_battery_25_bitmap;
 static GBitmap *s_bt_on_bitmap;
 static GBitmap *s_bt_off_bitmap;
 static GBitmap *s_steps_bitmap;
@@ -132,6 +136,7 @@ static AppTimer *s_deferred_refresh_timer = NULL;
 
 // State
 static int s_battery_level = 100;
+static bool s_battery_is_charging = false;
 static int s_temp_c = 0;
 static bool s_temp_known = false;
 static int s_weather_code = -1;   // -1 = unknown, otherwise WMO code from Open-Meteo
@@ -459,6 +464,22 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
     graphics_context_set_stroke_width(ctx, 1);
 }
 
+static GBitmap *get_battery_bitmap(void) {
+    if (s_battery_is_charging && s_battery_charging_bitmap) {
+        return s_battery_charging_bitmap;
+    }
+    if (s_battery_level >= 100 && s_battery_full_bitmap) {
+        return s_battery_full_bitmap;
+    }
+    if (s_battery_level >= 75 && s_battery_75_bitmap) {
+        return s_battery_75_bitmap;
+    }
+    if (s_battery_level >= 50 && s_battery_50_bitmap) {
+        return s_battery_50_bitmap;
+    }
+    return s_battery_25_bitmap;
+}
+
 // =============================================================================
 // Canvas update procedure
 // =============================================================================
@@ -500,8 +521,9 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
                                      GRect(LARGE_STATUS_CENTER_X - 12, LARGE_STATUS_ICON_Y, 24, 24));
     }
 
-    if (s_bolt_bitmap) {
-        graphics_draw_bitmap_in_rect(ctx, s_bolt_bitmap,
+    GBitmap *battery = get_battery_bitmap();
+    if (battery) {
+        graphics_draw_bitmap_in_rect(ctx, battery,
                                      GRect(LARGE_LEFT_CARD_X + 8,
                                            LARGE_BATTERY_BAR_Y + LARGE_BATTERY_BAR_H / 2 - 12,
                                            24, 24));
@@ -593,8 +615,9 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
         graphics_context_set_compositing_mode(ctx, GCompOpSet);
 
         // Battery icon (left)
-        if (s_bolt_bitmap) {
-            graphics_draw_bitmap_in_rect(ctx, s_bolt_bitmap,
+        GBitmap *battery = get_battery_bitmap();
+        if (battery) {
+            graphics_draw_bitmap_in_rect(ctx, battery,
                 GRect(margin, icon_y, icon_w, icon_h));
         }
 
@@ -777,6 +800,7 @@ static void connection_callback(bool connected) {
 
 static void battery_callback(BatteryChargeState state) {
     s_battery_level = state.charge_percent;
+    s_battery_is_charging = state.is_charging;
     snprintf(s_battery_text_buffer, sizeof(s_battery_text_buffer),
              "%d%%", s_battery_level);
     if (s_battery_value_layer) {
@@ -1115,10 +1139,14 @@ static void main_window_load(Window *window) {
     s_font_small = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_LABEL_14));
 
     // Load bitmap resources
-    s_bolt_bitmap   = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_BOLT);
-    s_bt_on_bitmap  = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_ON);
-    s_bt_off_bitmap = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_OFF);
-    s_steps_bitmap  = gbitmap_create_with_resource(RESOURCE_ID_STEPS);
+    s_battery_full_bitmap     = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_FULL);
+    s_battery_charging_bitmap = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_CHARGING);
+    s_battery_75_bitmap       = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_75);
+    s_battery_50_bitmap       = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_50);
+    s_battery_25_bitmap       = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_25);
+    s_bt_on_bitmap            = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_ON);
+    s_bt_off_bitmap           = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_OFF);
+    s_steps_bitmap            = gbitmap_create_with_resource(RESOURCE_ID_STEPS);
 
     // 1. Custom canvas covering the whole screen
     s_canvas_layer = layer_create(bounds);
@@ -1226,10 +1254,14 @@ static void main_window_unload(Window *window) {
     fonts_unload_custom_font(s_font_stat_large);
     fonts_unload_custom_font(s_font_small);
 
-    if (s_bolt_bitmap)   gbitmap_destroy(s_bolt_bitmap);
-    if (s_bt_on_bitmap)  gbitmap_destroy(s_bt_on_bitmap);
-    if (s_bt_off_bitmap) gbitmap_destroy(s_bt_off_bitmap);
-    if (s_steps_bitmap)  gbitmap_destroy(s_steps_bitmap);
+    if (s_battery_full_bitmap)     gbitmap_destroy(s_battery_full_bitmap);
+    if (s_battery_charging_bitmap) gbitmap_destroy(s_battery_charging_bitmap);
+    if (s_battery_75_bitmap)       gbitmap_destroy(s_battery_75_bitmap);
+    if (s_battery_50_bitmap)       gbitmap_destroy(s_battery_50_bitmap);
+    if (s_battery_25_bitmap)       gbitmap_destroy(s_battery_25_bitmap);
+    if (s_bt_on_bitmap)            gbitmap_destroy(s_bt_on_bitmap);
+    if (s_bt_off_bitmap)           gbitmap_destroy(s_bt_off_bitmap);
+    if (s_steps_bitmap)            gbitmap_destroy(s_steps_bitmap);
 }
 
 // =============================================================================

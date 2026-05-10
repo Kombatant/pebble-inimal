@@ -41,8 +41,40 @@
                     "type": "font"
                 },
                 {
-                    "file": "images/battery_android_frame_bolt_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.PNG",
-                    "name": "BATTERY_BOLT",
+                    "file": "images/battery_full.png",
+                    "name": "BATTERY_FULL",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/battery_charging.png",
+                    "name": "BATTERY_CHARGING",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/battery_75.png",
+                    "name": "BATTERY_75",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/battery_50.png",
+                    "name": "BATTERY_50",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
+                    "file": "images/battery_25.png",
+                    "name": "BATTERY_25",
                     "targetPlatforms": [
                         "emery"
                     ],
@@ -123,5 +155,5 @@
             "watchface": true
         }
     },
-    "version": "0.5.6"
+    "version": "0.6.0"
 }
