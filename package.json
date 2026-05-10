@@ -89,6 +89,14 @@
                     "type": "font"
                 },
                 {
+                    "file": "fonts/Rakuten Condensed Bold.ttf",
+                    "name": "FONT_TIME_64",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "font"
+                },
+                {
                     "file": "fonts/Inter_24pt-SemiBold.ttf",
                     "name": "FONT_TOP_20",
                     "targetPlatforms": [
@@ -115,5 +123,5 @@
             "watchface": true
         }
     },
-    "version": "0.5.1"
+    "version": "0.5.5"
 }
