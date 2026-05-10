@@ -758,6 +758,12 @@ static void update_health_data() {
 // =============================================================================
 // Battery service
 // =============================================================================
+static GColor get_large_battery_color(void) {
+    return s_battery_level <= 20
+        ? COLOR_FALLBACK(GColorMelon, GColorWhite)
+        : COLOR_FALLBACK(GColorScreaminGreen, GColorWhite);
+}
+
 // =============================================================================
 // Bluetooth / connection service
 // =============================================================================
@@ -775,6 +781,7 @@ static void battery_callback(BatteryChargeState state) {
              "%d%%", s_battery_level);
     if (s_battery_value_layer) {
         text_layer_set_text(s_battery_value_layer, s_battery_text_buffer);
+        text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
     }
     if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
 }
@@ -1017,7 +1024,6 @@ static void set_text_layer_hidden(TextLayer *text_layer, bool hidden) {
 static void apply_face_mode_layout(GRect bounds) {
     const int W = bounds.size.w;
     const bool large = (s_face_mode == FaceModeLarger);
-    GColor green = COLOR_FALLBACK(GColorScreaminGreen, GColorWhite);
     GColor red = COLOR_FALLBACK(GColorMelon, GColorWhite);
 
     layer_set_frame(text_layer_get_layer(s_date_layer),
@@ -1086,7 +1092,7 @@ static void apply_face_mode_layout(GRect bounds) {
     layer_set_frame(text_layer_get_layer(s_battery_value_layer),
                     GRect(50, LARGE_BATTERY_Y, 50, 32));
     text_layer_set_font(s_battery_value_layer, s_font_stat_large);
-    text_layer_set_text_color(s_battery_value_layer, green);
+    text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
     text_layer_set_text_alignment(s_battery_value_layer, GTextAlignmentLeft);
 
     if (s_canvas_layer) {
