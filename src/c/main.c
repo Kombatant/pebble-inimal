@@ -55,7 +55,7 @@
 #define LARGE_STATUS_DIVIDER_TOP 52
 #define LARGE_STATUS_DIVIDER_BOTTOM 126
 #define LARGE_STATUS_CENTER_X   176
-#define LARGE_SECONDS_Y         52
+#define LARGE_SECONDS_Y         60
 #define LARGE_STATUS_ICON_Y     94
 #define LARGE_STATS_Y           132
 #define LARGE_STATS_H           44
