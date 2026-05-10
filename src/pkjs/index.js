@@ -3,6 +3,11 @@
 // and sends the temperature back to the watch via AppMessage.
 // =============================================================================
 
+var APP_VERSION = (function () {
+    try { return require('./version').version; }
+    catch (e) { return '0.0.0'; }
+})();
+
 var xhrRequest = function (url, type, callback) {
     var xhr = new XMLHttpRequest();
     xhr.onload = function () { callback(this.responseText); };
@@ -140,6 +145,11 @@ var CONFIG_HTML =
 'Estimate is learned from your usage; allow a day of wear before it stabilizes.</div>' +
 '</div>' +
 
+'<div class="field">' +
+'<label>About</label>' +
+'<div class="desc" style="font-size:1em;color:#222;margin-top:4px">Pebble-inimal v__APP_VERSION__</div>' +
+'</div>' +
+
 '<button onclick="save()">Save</button>' +
 
 '<script>' +
@@ -199,7 +209,8 @@ function buildConfigUrl() {
         .replace('__W120__', s.weather === 120 ? 'selected' : '')
         .replace('__W360__', s.weather === 360 ? 'selected' : '')
         .replace('__BAT_EST__',  b.est)
-        .replace('__BAT_RATE__', b.rate);
+        .replace('__BAT_RATE__', b.rate)
+        .replace('__APP_VERSION__', APP_VERSION);
     return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
 }
 

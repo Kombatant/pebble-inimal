@@ -5,6 +5,7 @@
 #
 
 import os.path
+import json
 try:
     from sh import CommandNotFound, jshint, cat, ErrorReturnCode_2
     hint = jshint
@@ -13,6 +14,16 @@ except (ImportError, Exception):
 
 top = '.'
 out = 'build'
+
+
+def _write_version_js(ctx):
+    with open(ctx.path.find_node('package.json').abspath(), 'r') as f:
+        pkg = json.load(f)
+    version = pkg.get('version', '0.0.0')
+    out_path = ctx.path.find_dir('src/pkjs').make_node('version.js').abspath()
+    with open(out_path, 'w') as f:
+        f.write('// Auto-generated from package.json by wscript. Do not edit.\n')
+        f.write('module.exports = ' + json.dumps({'version': version}) + ';\n')
 
 
 def options(ctx):
@@ -31,6 +42,8 @@ def build(ctx):
             ctx.fatal("\nJavaScript linting failed (you can disable this in Project Settings):\n" + e.stdout)
 
     ctx.load('pebble_sdk')
+
+    _write_version_js(ctx)
 
     build_worker = os.path.exists('worker_src')
     binaries = []
