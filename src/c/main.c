@@ -136,7 +136,7 @@ static AppTimer *s_deferred_refresh_timer = NULL;
 
 // State
 static int s_battery_level = 100;
-static bool s_battery_is_charging = false;
+static bool s_battery_is_powered = false;
 static int s_temp_c = 0;
 static bool s_temp_known = false;
 static int s_weather_code = -1;   // -1 = unknown, otherwise WMO code from Open-Meteo
@@ -477,7 +477,7 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
 }
 
 static GBitmap *get_battery_bitmap(void) {
-    if (s_battery_is_charging && s_battery_charging_bitmap) {
+    if (s_battery_is_powered && s_battery_charging_bitmap) {
         return s_battery_charging_bitmap;
     }
     if (s_battery_level > 75 && s_battery_full_bitmap) {
@@ -821,9 +821,9 @@ static void connection_callback(bool connected) {
 static void battery_estimator_update(BatteryChargeState state) {
     time_t now = time(NULL);
 
-    if (state.is_charging) {
-        // Freeze EWMA across a charge cycle. Reset only the dt anchor so the
-        // first post-charge sample doesn't span the charging window.
+    if (state.is_charging || state.is_plugged) {
+        // Freeze EWMA while externally powered. Reset only the dt anchor so the
+        // first post-power sample doesn't span time spent on the charger.
         s_bat_last_pct = state.charge_percent;
         s_bat_last_ts  = now;
         return;
@@ -839,8 +839,16 @@ static void battery_estimator_update(BatteryChargeState state) {
     int32_t dt_sec = (int32_t)(now - s_bat_last_ts);
     int32_t dpct   = (int32_t)s_bat_last_pct - (int32_t)state.charge_percent;
 
-    // Reject: noise floor (<3 min), no drop yet, or stale gap (>12 h).
-    if (dt_sec < 180 || dpct <= 0 || dt_sec > 12 * 3600) {
+    if (dt_sec <= 0 || dt_sec > 12 * 3600) {
+        // Persisted samples can be stale after a long app/watch downtime, and
+        // device time can move backward. Drop the old sample and start fresh.
+        s_bat_last_pct = state.charge_percent;
+        s_bat_last_ts  = now;
+        return;
+    }
+
+    // Reject: noise floor (<3 min) or no drop yet.
+    if (dt_sec < 180 || dpct <= 0) {
         if (dpct < 0) {
             // Battery rose without is_charging set (firmware glitch). Re-anchor.
             s_bat_last_pct = state.charge_percent;
@@ -871,7 +879,7 @@ static void battery_estimator_update(BatteryChargeState state) {
 // Format current battery-life estimate into buf.
 // Produces "charging", "—", "Xd Yh", or "Yh Zm".
 static void battery_estimator_format(char *buf, size_t n) {
-    if (s_battery_is_charging) {
+    if (s_battery_is_powered) {
         snprintf(buf, n, "charging");
         return;
     }
@@ -897,7 +905,7 @@ static void battery_estimator_format(char *buf, size_t n) {
 static void battery_callback(BatteryChargeState state) {
     battery_estimator_update(state);
     s_battery_level = state.charge_percent;
-    s_battery_is_charging = state.is_charging;
+    s_battery_is_powered = state.is_charging || state.is_plugged;
     snprintf(s_battery_text_buffer, sizeof(s_battery_text_buffer),
              "%d%%", s_battery_level);
     if (s_battery_value_layer) {
