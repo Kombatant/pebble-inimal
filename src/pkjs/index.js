@@ -65,9 +65,11 @@ Pebble.addEventListener('appmessage', function (e) {
     }
     if (typeof e.payload.BATTERY_ESTIMATE !== 'undefined') {
         localStorage.setItem('batteryEstimate', String(e.payload.BATTERY_ESTIMATE));
+        localStorage.setItem('batterySinceCharge', String(e.payload.BATTERY_SINCE_CHARGE || ''));
         localStorage.setItem('batteryRateMilli', String(e.payload.BATTERY_RATE_MILLI || 0));
         localStorage.setItem('batteryUpdatedAt', String(Date.now()));
         console.log('Battery info: ' + e.payload.BATTERY_ESTIMATE +
+                    ', since charge ' + e.payload.BATTERY_SINCE_CHARGE +
                     ' (' + e.payload.BATTERY_RATE_MILLI + ' m%/h)');
     }
 });
@@ -99,6 +101,10 @@ var CONFIG_HTML =
 '.row{display:flex;gap:12px;margin-top:12px}' +
 '.row > div{flex:1}' +
 '.row label{font-weight:500;font-size:.9em;margin-bottom:6px}' +
+'.metric{display:flex;align-items:baseline;justify-content:space-between;' +
+'gap:12px;margin-top:8px}' +
+'.metric .name{color:#555;font-size:.9em}' +
+'.metric .value{font-size:1em;color:#222;font-weight:600;white-space:nowrap}' +
 '#nightOptions{margin-top:14px;padding-top:14px;border-top:1px solid #eee}' +
 '.hidden{display:none}' +
 'button{width:100%;padding:14px;font-size:16px;background:#007aff;' +
@@ -139,8 +145,11 @@ var CONFIG_HTML =
 '</select></div>' +
 
 '<div class="field">' +
-'<label>Battery remaining</label>' +
-'<div class="desc" style="font-size:1em;color:#222;margin-top:4px">__BAT_EST__</div>' +
+'<label>Battery</label>' +
+'<div class="metric"><span class="name">Time since last charge</span>' +
+'<span class="value">__BAT_SINCE__</span></div>' +
+'<div class="metric"><span class="name">Time remaining</span>' +
+'<span class="value">__BAT_EST__</span></div>' +
 '<div class="desc">Discharge rate: __BAT_RATE__ %/hour. ' +
 'Estimate is learned from your usage; allow a day of wear before it stabilizes.</div>' +
 '</div>' +
@@ -182,6 +191,7 @@ function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
 function getBatteryDisplay() {
     var est = localStorage.getItem('batteryEstimate');
+    var since = localStorage.getItem('batterySinceCharge');
     var rateMilli = parseInt(localStorage.getItem('batteryRateMilli') || '0', 10);
     var rateStr;
     if (!rateMilli || rateMilli <= 0) {
@@ -190,7 +200,8 @@ function getBatteryDisplay() {
         rateStr = (rateMilli / 1000).toFixed(2);
     }
     if (!est || est === '') est = '—';
-    return { est: est, rate: rateStr };
+    if (!since || since === '') since = '—';
+    return { est: est, since: since, rate: rateStr };
 }
 
 function buildConfigUrl() {
@@ -208,6 +219,7 @@ function buildConfigUrl() {
         .replace('__W60__',  s.weather === 60  ? 'selected' : '')
         .replace('__W120__', s.weather === 120 ? 'selected' : '')
         .replace('__W360__', s.weather === 360 ? 'selected' : '')
+        .replace('__BAT_SINCE__', b.since)
         .replace('__BAT_EST__',  b.est)
         .replace('__BAT_RATE__', b.rate)
         .replace('__APP_VERSION__', APP_VERSION);

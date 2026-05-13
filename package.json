@@ -22,6 +22,7 @@
             "FACE_MODE",
             "REQUEST_BATTERY_INFO",
             "BATTERY_ESTIMATE",
+            "BATTERY_SINCE_CHARGE",
             "BATTERY_RATE_MILLI"
         ],
         "projectType": "native",
@@ -108,6 +109,14 @@
                     "type": "bitmap"
                 },
                 {
+                    "file": "images/dnd.png",
+                    "name": "DND",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "bitmap"
+                },
+                {
                     "file": "images/steps.png",
                     "name": "STEPS",
                     "targetPlatforms": [
@@ -158,5 +167,5 @@
             "watchface": true
         }
     },
-    "version": "0.7.2"
+    "version": "0.7.7"
 }

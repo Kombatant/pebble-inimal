@@ -100,10 +100,12 @@ static GBitmap *s_battery_50_bitmap;
 static GBitmap *s_battery_25_bitmap;
 static GBitmap *s_bt_on_bitmap;
 static GBitmap *s_bt_off_bitmap;
+static GBitmap *s_dnd_bitmap;
 static GBitmap *s_steps_bitmap;
 
 // Bluetooth connection state
 static bool s_bt_connected = true;
+static bool s_quiet_time_active = false;
 
 // Buffers (must remain valid as long as TextLayer references them)
 static char s_time_buffer[12];   // "HH:MM:SS" + null
@@ -157,6 +159,19 @@ static FaceMode s_face_mode = FaceModeLarger;
 static time_t s_last_tap_time      = 0;
 static time_t s_last_weather_fetch = 0;
 
+static bool refresh_quiet_time_state(void) {
+    const bool active = quiet_time_is_active();
+    const bool changed = (active != s_quiet_time_active);
+    s_quiet_time_active = active;
+    return changed;
+}
+
+static void refresh_quiet_time_state_and_canvas(void) {
+    if (refresh_quiet_time_state() && s_canvas_layer) {
+        layer_mark_dirty(s_canvas_layer);
+    }
+}
+
 // Persistent storage keys
 #define PERSIST_KEY_TEMP             100
 #define PERSIST_KEY_TEMP_KNOWN       101
@@ -170,6 +185,8 @@ static time_t s_last_weather_fetch = 0;
 #define PERSIST_KEY_BAT_LAST_TS      109
 #define PERSIST_KEY_BAT_EWMA_MILLI   110
 #define PERSIST_KEY_BAT_EWMA_INIT    111
+#define PERSIST_KEY_BAT_LAST_CHARGE  112
+#define PERSIST_KEY_BAT_POWERED      113
 
 // Battery life estimator state
 // EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
@@ -178,6 +195,7 @@ static uint8_t  s_bat_last_pct      = 0;
 static time_t   s_bat_last_ts       = 0;
 static int32_t  s_bat_ewma_milli    = 0;     // 0 == uninitialized
 static bool     s_bat_ewma_init     = false;
+static time_t   s_bat_last_charge_ts = 0;    // Last transition off external power.
 
 // =============================================================================
 // Drawing helpers
@@ -532,6 +550,10 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
         graphics_draw_bitmap_in_rect(ctx, bt,
                                      GRect(LARGE_STATUS_CENTER_X - 12, LARGE_STATUS_ICON_Y, 24, 24));
     }
+    if (s_quiet_time_active && !s_seconds_active && s_dnd_bitmap) {
+        graphics_draw_bitmap_in_rect(ctx, s_dnd_bitmap,
+                                     GRect(LARGE_STATUS_CENTER_X - 12, LARGE_SECONDS_Y + 2, 24, 24));
+    }
 
     GBitmap *battery = get_battery_bitmap();
     if (battery) {
@@ -659,6 +681,12 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
         if (bt) {
             graphics_draw_bitmap_in_rect(ctx, bt,
                 GRect(W - margin - icon_w, icon_y, icon_w, icon_h));
+        }
+
+        // Quiet Time icon, directly before Bluetooth when active.
+        if (s_quiet_time_active && s_dnd_bitmap) {
+            graphics_draw_bitmap_in_rect(ctx, s_dnd_bitmap,
+                GRect(W - margin - (icon_w * 2) - gap, icon_y, icon_w, icon_h));
         }
     }
 }
@@ -876,6 +904,20 @@ static void battery_estimator_update(BatteryChargeState state) {
             (int)dpct, (int)dt_sec, (long)rate_milli, (long)s_bat_ewma_milli);
 }
 
+// Shared battery duration formatting. Produces "Xd Yh" or "Yh Zm".
+static void battery_duration_format(int32_t total_min, char *buf, size_t n) {
+    if (total_min < 0) total_min = 0;
+    int days  = total_min / (60 * 24);
+    int hours = (total_min / 60) % 24;
+    int mins  = total_min % 60;
+
+    if (days > 0) {
+        snprintf(buf, n, "%dd %dh", days, hours);
+    } else {
+        snprintf(buf, n, "%dh %dm", hours, mins);
+    }
+}
+
 // Format current battery-life estimate into buf.
 // Produces "charging", "—", "Xd Yh", or "Yh Zm".
 static void battery_estimator_format(char *buf, size_t n) {
@@ -889,23 +931,37 @@ static void battery_estimator_format(char *buf, size_t n) {
     }
     // total_minutes = pct * 60 * 1000 / ewma_milli
     int32_t total_min = ((int32_t)s_battery_level * 60 * 1000) / s_bat_ewma_milli;
-    if (total_min < 0) total_min = 0;
+    battery_duration_format(total_min, buf, n);
+}
 
-    int days  = total_min / (60 * 24);
-    int hours = (total_min / 60) % 24;
-    int mins  = total_min % 60;
-
-    if (days > 0) {
-        snprintf(buf, n, "%dd %dh", days, hours);
-    } else {
-        snprintf(buf, n, "%dh %dm", hours, mins);
+static void battery_since_last_charge_format(char *buf, size_t n) {
+    if (s_battery_is_powered) {
+        snprintf(buf, n, "charging");
+        return;
     }
+    if (s_bat_last_charge_ts == 0) {
+        snprintf(buf, n, "—");
+        return;
+    }
+    time_t now = time(NULL);
+    int32_t total_min = (int32_t)((now - s_bat_last_charge_ts) / 60);
+    battery_duration_format(total_min, buf, n);
 }
 
 static void battery_callback(BatteryChargeState state) {
+    bool was_powered = s_battery_is_powered;
+    bool is_powered = state.is_charging || state.is_plugged;
+
     battery_estimator_update(state);
     s_battery_level = state.charge_percent;
-    s_battery_is_powered = state.is_charging || state.is_plugged;
+    if (was_powered && !is_powered) {
+        s_bat_last_charge_ts = time(NULL);
+        persist_write_int(PERSIST_KEY_BAT_LAST_CHARGE, (int)s_bat_last_charge_ts);
+    }
+    if (was_powered != is_powered) {
+        persist_write_bool(PERSIST_KEY_BAT_POWERED, is_powered);
+    }
+    s_battery_is_powered = is_powered;
     snprintf(s_battery_text_buffer, sizeof(s_battery_text_buffer),
              "%d%%", s_battery_level);
     if (s_battery_value_layer) {
@@ -938,7 +994,15 @@ static bool is_night_idle(struct tm *now) {
     return true;
 }
 
+static void app_focus_handler(bool in_focus) {
+    if (in_focus) {
+        refresh_quiet_time_state_and_canvas();
+    }
+}
+
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+    refresh_quiet_time_state_and_canvas();
+
     if (units_changed & MINUTE_UNIT) {
         // Skip everything for 4 of every 5 minutes when night-idle
         if (is_night_idle(tick_time) && (tick_time->tm_min % 5 != 0)) {
@@ -1011,7 +1075,11 @@ static void seconds_timeout_handler(void *context) {
         s_seconds_tick_timer = NULL;
     }
     if (s_face_mode == FaceModeLarger) {
+        refresh_quiet_time_state();
         render_time();
+        if (s_quiet_time_active && s_canvas_layer) {
+            layer_mark_dirty(s_canvas_layer);
+        }
     }
 }
 
@@ -1023,6 +1091,8 @@ static void deferred_refresh_handler(void *context) {
 static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
     time_t now_t = time(NULL);
     struct tm *now = localtime(&now_t);
+    const bool was_seconds_active = s_seconds_active;
+    const bool quiet_changed = refresh_quiet_time_state();
 
     // Record this tap so the night-idle gate knows the wrist just moved.
     s_last_tap_time = now_t;
@@ -1032,6 +1102,11 @@ static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
     // the moment they look at the watch.
     if (!s_seconds_active) {
         s_seconds_active = true;
+    }
+    if (s_canvas_layer &&
+        (quiet_changed ||
+         (s_face_mode == FaceModeLarger && s_quiet_time_active && !was_seconds_active))) {
+        layer_mark_dirty(s_canvas_layer);
     }
 
     // Show fresh seconds on every tap. Multiple accel taps can arrive while
@@ -1131,10 +1206,13 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     Tuple *bat_req = dict_find(iterator, MESSAGE_KEY_REQUEST_BATTERY_INFO);
     if (bat_req) {
         char est[24];
+        char since_charge[24];
         battery_estimator_format(est, sizeof(est));
+        battery_since_last_charge_format(since_charge, sizeof(since_charge));
         DictionaryIterator *out;
         if (app_message_outbox_begin(&out) == APP_MSG_OK) {
             dict_write_cstring(out, MESSAGE_KEY_BATTERY_ESTIMATE, est);
+            dict_write_cstring(out, MESSAGE_KEY_BATTERY_SINCE_CHARGE, since_charge);
             dict_write_int32  (out, MESSAGE_KEY_BATTERY_RATE_MILLI, s_bat_ewma_milli);
             app_message_outbox_send();
         }
@@ -1236,6 +1314,7 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
     text_layer_set_text_alignment(s_battery_value_layer, GTextAlignmentLeft);
 
+    refresh_quiet_time_state();
     if (s_canvas_layer) {
         layer_mark_dirty(s_canvas_layer);
     }
@@ -1263,7 +1342,9 @@ static void main_window_load(Window *window) {
     s_battery_25_bitmap       = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_25);
     s_bt_on_bitmap            = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_ON);
     s_bt_off_bitmap           = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_OFF);
+    s_dnd_bitmap              = gbitmap_create_with_resource(RESOURCE_ID_DND);
     s_steps_bitmap            = gbitmap_create_with_resource(RESOURCE_ID_STEPS);
+    refresh_quiet_time_state();
 
     // 1. Custom canvas covering the whole screen
     s_canvas_layer = layer_create(bounds);
@@ -1378,6 +1459,7 @@ static void main_window_unload(Window *window) {
     if (s_battery_25_bitmap)       gbitmap_destroy(s_battery_25_bitmap);
     if (s_bt_on_bitmap)            gbitmap_destroy(s_bt_on_bitmap);
     if (s_bt_off_bitmap)           gbitmap_destroy(s_bt_off_bitmap);
+    if (s_dnd_bitmap)              gbitmap_destroy(s_dnd_bitmap);
     if (s_steps_bitmap)            gbitmap_destroy(s_steps_bitmap);
 }
 
@@ -1429,6 +1511,12 @@ static void init() {
     if (persist_exists(PERSIST_KEY_BAT_LAST_TS)) {
         s_bat_last_ts = (time_t)persist_read_int(PERSIST_KEY_BAT_LAST_TS);
     }
+    if (persist_exists(PERSIST_KEY_BAT_LAST_CHARGE)) {
+        s_bat_last_charge_ts = (time_t)persist_read_int(PERSIST_KEY_BAT_LAST_CHARGE);
+    }
+    if (persist_exists(PERSIST_KEY_BAT_POWERED)) {
+        s_battery_is_powered = persist_read_bool(PERSIST_KEY_BAT_POWERED);
+    }
 
     // Treat startup as a recent "tap" so we don't immediately enter night-idle
     // (e.g., during a watch reboot at 3am).
@@ -1445,6 +1533,7 @@ static void init() {
     tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
     battery_state_service_subscribe(battery_callback);
     accel_tap_service_subscribe(accel_tap_handler);
+    app_focus_service_subscribe(app_focus_handler);
     s_bt_connected = connection_service_peek_pebble_app_connection();
     connection_service_subscribe((ConnectionHandlers){
         .pebble_app_connection_handler = connection_callback
@@ -1470,10 +1559,13 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_BAT_LAST_TS,    (int)s_bat_last_ts);
     persist_write_int (PERSIST_KEY_BAT_EWMA_MILLI, (int)s_bat_ewma_milli);
     persist_write_bool(PERSIST_KEY_BAT_EWMA_INIT,  s_bat_ewma_init);
+    persist_write_int (PERSIST_KEY_BAT_LAST_CHARGE, (int)s_bat_last_charge_ts);
+    persist_write_bool(PERSIST_KEY_BAT_POWERED,     s_battery_is_powered);
     if (s_seconds_timeout_timer) app_timer_cancel(s_seconds_timeout_timer);
     if (s_seconds_tick_timer) app_timer_cancel(s_seconds_tick_timer);
     if (s_deferred_refresh_timer) app_timer_cancel(s_deferred_refresh_timer);
     accel_tap_service_unsubscribe();
+    app_focus_service_unsubscribe();
     connection_service_unsubscribe();
     window_destroy(s_main_window);
 }
