@@ -91,6 +91,7 @@ static GFont s_font_label;
 static GFont s_font_stat;
 static GFont s_font_stat_large;
 static GFont s_font_small;
+static GFont s_font_seconds;
 
 // Bitmaps loaded from resources
 static GBitmap *s_battery_full_bitmap;
@@ -1304,7 +1305,7 @@ static void apply_face_mode_layout(GRect bounds) {
 
     layer_set_frame(text_layer_get_layer(s_seconds_layer),
                     GRect(LARGE_STATUS_CENTER_X - 16, LARGE_SECONDS_Y, 32, 28));
-    text_layer_set_font(s_seconds_layer, s_font_label);
+    text_layer_set_font(s_seconds_layer, s_font_seconds);
     text_layer_set_text_color(s_seconds_layer, GColorWhite);
     text_layer_set_text_alignment(s_seconds_layer, GTextAlignmentCenter);
 
@@ -1333,6 +1334,7 @@ static void main_window_load(Window *window) {
     s_font_stat  = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
     s_font_stat_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_STAT_22));
     s_font_small = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_LABEL_14));
+    s_font_seconds = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_18));
 
     // Load bitmap resources
     s_battery_full_bitmap     = gbitmap_create_with_resource(RESOURCE_ID_BATTERY_FULL);
@@ -1451,6 +1453,7 @@ static void main_window_unload(Window *window) {
     fonts_unload_custom_font(s_font_stat);
     fonts_unload_custom_font(s_font_stat_large);
     fonts_unload_custom_font(s_font_small);
+    fonts_unload_custom_font(s_font_seconds);
 
     if (s_battery_full_bitmap)     gbitmap_destroy(s_battery_full_bitmap);
     if (s_battery_charging_bitmap) gbitmap_destroy(s_battery_charging_bitmap);
