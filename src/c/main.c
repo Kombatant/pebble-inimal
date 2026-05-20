@@ -156,6 +156,42 @@ typedef enum {
 } FaceMode;
 static FaceMode s_face_mode = FaceModeLarger;
 
+// Backlight colour (Pebble Time 2 / Emery only — RGB backlight LED).
+// System Default leaves the watch's own backlight colour untouched.
+typedef enum {
+    BacklightSystem   = 0,
+    BacklightWhite    = 1,
+    BacklightYInMn    = 2,
+    BacklightRed      = 3,
+    BacklightAmber    = 4,
+    BacklightYellow   = 5,
+    BacklightGreen    = 6,
+    BacklightColorCount
+} BacklightColor;
+static BacklightColor s_backlight_color = BacklightSystem;
+
+// Packed 0x00RRGGBB values, indexed by BacklightColor. Index 0 (System) unused.
+static const uint32_t s_backlight_rgb[BacklightColorCount] = {
+    0x000000,   // BacklightSystem  — handled separately, value ignored
+    0xFFFFFF,   // BacklightWhite
+    0x306AC0,   // BacklightYInMn   — YInMn Blue
+    0xFF0000,   // BacklightRed
+    0xFFBF00,   // BacklightAmber
+    0xFFFF00,   // BacklightYellow
+    0x00FF00    // BacklightGreen
+};
+
+// Apply the configured backlight colour. The override only lasts while the
+// app is foregrounded, so this is called on launch and on every settings
+// change. On non-RGB-backlight platforms the light_* calls are no-ops.
+static void apply_backlight_color(void) {
+    if (s_backlight_color == BacklightSystem) {
+        light_set_system_color();
+    } else {
+        light_set_color_rgb888(s_backlight_rgb[s_backlight_color]);
+    }
+}
+
 // Tracking state for the night-idle gate and the weather refresh schedule
 static time_t s_last_tap_time      = 0;
 static time_t s_last_weather_fetch = 0;
@@ -188,6 +224,7 @@ static void refresh_quiet_time_state_and_canvas(void) {
 #define PERSIST_KEY_BAT_EWMA_INIT    111
 #define PERSIST_KEY_BAT_LAST_CHARGE  112
 #define PERSIST_KEY_BAT_POWERED      113
+#define PERSIST_KEY_BACKLIGHT_COLOR  114
 
 // Battery life estimator state
 // EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
@@ -1203,6 +1240,16 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
             APP_LOG(APP_LOG_LEVEL_INFO, "Face mode: %d", v);
         }
     }
+    Tuple *backlight = dict_find(iterator, MESSAGE_KEY_BACKLIGHT_COLOR);
+    if (backlight) {
+        int v = (int)backlight->value->int32;
+        if (v >= 0 && v < BacklightColorCount) {
+            s_backlight_color = (BacklightColor)v;
+            persist_write_int(PERSIST_KEY_BACKLIGHT_COLOR, (int)s_backlight_color);
+            apply_backlight_color();
+            APP_LOG(APP_LOG_LEVEL_INFO, "Backlight colour: %d", v);
+        }
+    }
 
     Tuple *bat_req = dict_find(iterator, MESSAGE_KEY_REQUEST_BATTERY_INFO);
     if (bat_req) {
@@ -1499,6 +1546,12 @@ static void init() {
             s_face_mode = (FaceMode)mode;
         }
     }
+    if (persist_exists(PERSIST_KEY_BACKLIGHT_COLOR)) {
+        int c = persist_read_int(PERSIST_KEY_BACKLIGHT_COLOR);
+        if (c >= 0 && c < BacklightColorCount) {
+            s_backlight_color = (BacklightColor)c;
+        }
+    }
 
     // Restore battery estimator state across launches.
     if (persist_exists(PERSIST_KEY_BAT_EWMA_INIT)) {
@@ -1533,6 +1586,9 @@ static void init() {
     });
     window_stack_push(s_main_window, true);
 
+    // Backlight override only persists while foregrounded — re-apply on launch.
+    apply_backlight_color();
+
     tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
     battery_state_service_subscribe(battery_callback);
     accel_tap_service_subscribe(accel_tap_handler);
@@ -1558,6 +1614,7 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
     persist_write_int (PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
     persist_write_int (PERSIST_KEY_FACE_MODE,   (int)s_face_mode);
+    persist_write_int (PERSIST_KEY_BACKLIGHT_COLOR, (int)s_backlight_color);
     persist_write_int (PERSIST_KEY_BAT_LAST_PCT,   (int)s_bat_last_pct);
     persist_write_int (PERSIST_KEY_BAT_LAST_TS,    (int)s_bat_last_ts);
     persist_write_int (PERSIST_KEY_BAT_EWMA_MILLI, (int)s_bat_ewma_milli);

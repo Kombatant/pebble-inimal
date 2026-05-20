@@ -23,7 +23,8 @@
             "REQUEST_BATTERY_INFO",
             "BATTERY_ESTIMATE",
             "BATTERY_SINCE_CHARGE",
-            "BATTERY_RATE_MILLI"
+            "BATTERY_RATE_MILLI",
+            "BACKLIGHT_COLOR"
         ],
         "projectType": "native",
         "resources": {
@@ -175,5 +176,5 @@
             "watchface": true
         }
     },
-    "version": "0.7.7"
+    "version": "0.8.0"
 }

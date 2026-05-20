@@ -134,6 +134,20 @@ var CONFIG_HTML =
 '<input type="time" id="nightEnd" value="__NIGHT_END__" step="3600"></div>' +
 '</div></div></div>' +
 
+'<div class="field __BACKLIGHT_FIELD_CLASS__" id="backlightField">' +
+'<label for="backlight">Backlight colour</label>' +
+'<select id="backlight">' +
+'<option value="0" __BL0__>System Default</option>' +
+'<option value="1" __BL1__>White</option>' +
+'<option value="2" __BL2__>YInMn Blue</option>' +
+'<option value="3" __BL3__>Red</option>' +
+'<option value="4" __BL4__>Amber</option>' +
+'<option value="5" __BL5__>Yellow</option>' +
+'<option value="6" __BL6__>Green</option>' +
+'</select>' +
+'<div class="desc">Tints the backlight LED. Available on Pebble Time 2 only.</div>' +
+'</div>' +
+
 '<div class="field">' +
 '<label for="weather">Weather refresh</label>' +
 '<select id="weather">' +
@@ -174,6 +188,9 @@ var CONFIG_HTML =
 'NIGHT_END_HOUR:hourFromTime(document.getElementById("nightEnd").value),' +
 'FACE_MODE:parseInt(document.getElementById("faceMode").value,10),' +
 'WEATHER_INTERVAL:parseInt(document.getElementById("weather").value,10)};' +
+'var bf=document.getElementById("backlightField");' +
+'if(bf&&bf.className.indexOf("hidden")<0){' +
+'d.BACKLIGHT_COLOR=parseInt(document.getElementById("backlight").value,10);}' +
 'document.location="pebblejs://close#"+encodeURIComponent(JSON.stringify(d));}' +
 '</script></body></html>';
 
@@ -183,8 +200,19 @@ function getStoredSettings() {
         nightStart: parseInt(localStorage.getItem('nightStart') || '0', 10),
         nightEnd:   parseInt(localStorage.getItem('nightEnd')   || '6', 10),
         weather:    parseInt(localStorage.getItem('weather')    || '30', 10),
-        faceMode:   parseInt(localStorage.getItem('faceMode')   || '1', 10)
+        faceMode:   parseInt(localStorage.getItem('faceMode')   || '1', 10),
+        backlight:  parseInt(localStorage.getItem('backlight')  || '0', 10)
     };
+}
+
+// Backlight colour is an Emery-only (Pebble Time 2) feature — RGB backlight.
+function isEmery() {
+    try {
+        var info = Pebble.getActiveWatchInfo && Pebble.getActiveWatchInfo();
+        return !!(info && info.platform === 'emery');
+    } catch (e) {
+        return false;
+    }
 }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
@@ -222,6 +250,14 @@ function buildConfigUrl() {
         .replace('__BAT_SINCE__', b.since)
         .replace('__BAT_EST__',  b.est)
         .replace('__BAT_RATE__', b.rate)
+        .replace('__BACKLIGHT_FIELD_CLASS__', isEmery() ? '' : 'hidden')
+        .replace('__BL0__', s.backlight === 0 ? 'selected' : '')
+        .replace('__BL1__', s.backlight === 1 ? 'selected' : '')
+        .replace('__BL2__', s.backlight === 2 ? 'selected' : '')
+        .replace('__BL3__', s.backlight === 3 ? 'selected' : '')
+        .replace('__BL4__', s.backlight === 4 ? 'selected' : '')
+        .replace('__BL5__', s.backlight === 5 ? 'selected' : '')
+        .replace('__BL6__', s.backlight === 6 ? 'selected' : '')
         .replace('__APP_VERSION__', APP_VERSION);
     return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
 }
@@ -247,6 +283,9 @@ Pebble.addEventListener('webviewclosed', function (e) {
         localStorage.setItem('nightEnd',   String(settings.NIGHT_END_HOUR));
         localStorage.setItem('weather',    String(settings.WEATHER_INTERVAL));
         localStorage.setItem('faceMode',   String(settings.FACE_MODE || 0));
+        if (typeof settings.BACKLIGHT_COLOR !== 'undefined') {
+            localStorage.setItem('backlight', String(settings.BACKLIGHT_COLOR));
+        }
 
         Pebble.sendAppMessage(settings,
             function ()  { console.log('Settings sent: ' + JSON.stringify(settings)); },
