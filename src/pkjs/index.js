@@ -164,7 +164,10 @@ var CONFIG_HTML =
 '<span class="value">__BAT_SINCE__</span></div>' +
 '<div class="metric"><span class="name">Time remaining</span>' +
 '<span class="value">__BAT_EST__</span></div>' +
-'<div class="desc">Discharge rate: __BAT_RATE__ %/hour. ' +
+'<div class="metric"><span class="name">Next charge</span>' +
+'<span class="value">__BAT_NEXT__</span></div>' +
+'<div class="desc">Discharge rate: __BAT_RATE__ %/hour ' +
+'(__BAT_RATE_DAY__ %/day). ' +
 'Estimate is learned from your usage; allow a day of wear before it stabilizes.</div>' +
 '</div>' +
 
@@ -217,19 +220,46 @@ function isEmery() {
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
+// Parse a "Xd Yh" or "Yh Zm" duration string into total hours.
+// Returns null if the string is not a parseable estimate.
+function parseDurationHours(s) {
+    if (!s) return null;
+    var d = s.match(/(\d+)d/);
+    var h = s.match(/(\d+)h/);
+    var m = s.match(/(\d+)m/);
+    if (!d && !h && !m) return null;
+    return (d ? parseInt(d[1], 10) * 24 : 0) +
+           (h ? parseInt(h[1], 10) : 0) +
+           (m ? parseInt(m[1], 10) / 60 : 0);
+}
+
 function getBatteryDisplay() {
     var est = localStorage.getItem('batteryEstimate');
     var since = localStorage.getItem('batterySinceCharge');
     var rateMilli = parseInt(localStorage.getItem('batteryRateMilli') || '0', 10);
-    var rateStr;
+    var rateStr, rateDayStr;
     if (!rateMilli || rateMilli <= 0) {
         rateStr = '—';
+        rateDayStr = '—';
     } else {
         rateStr = (rateMilli / 1000).toFixed(2);
+        rateDayStr = (rateMilli * 24 / 1000).toFixed(1);
     }
+
+    // Next-charge date: today + remaining hours from the estimate string.
+    var nextStr = '—';
+    var hours = parseDurationHours(est);
+    if (hours !== null) {
+        var when = new Date(Date.now() + hours * 3600 * 1000);
+        nextStr = when.getDate() + '/' + (when.getMonth() + 1);
+    }
+
     if (!est || est === '') est = '—';
     if (!since || since === '') since = '—';
-    return { est: est, since: since, rate: rateStr };
+    return {
+        est: est, since: since, rate: rateStr,
+        rateDay: rateDayStr, next: nextStr
+    };
 }
 
 function buildConfigUrl() {
@@ -249,7 +279,9 @@ function buildConfigUrl() {
         .replace('__W360__', s.weather === 360 ? 'selected' : '')
         .replace('__BAT_SINCE__', b.since)
         .replace('__BAT_EST__',  b.est)
+        .replace('__BAT_NEXT__', b.next)
         .replace('__BAT_RATE__', b.rate)
+        .replace('__BAT_RATE_DAY__', b.rateDay)
         .replace('__BACKLIGHT_FIELD_CLASS__', isEmery() ? '' : 'hidden')
         .replace('__BL0__', s.backlight === 0 ? 'selected' : '')
         .replace('__BL1__', s.backlight === 1 ? 'selected' : '')
