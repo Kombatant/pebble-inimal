@@ -135,7 +135,7 @@ static AppTimer *s_seconds_timeout_timer = NULL;
 static AppTimer *s_seconds_tick_timer = NULL;
 static AppTimer *s_deferred_refresh_timer = NULL;
 #define SECONDS_DURATION_MS 3500
-#define SECONDS_POLL_MS 200
+#define SECONDS_POLL_MS 1000
 
 // State
 static int s_battery_level = 100;
@@ -225,6 +225,7 @@ static void refresh_quiet_time_state_and_canvas(void) {
 #define PERSIST_KEY_BAT_LAST_CHARGE  112
 #define PERSIST_KEY_BAT_POWERED      113
 #define PERSIST_KEY_BACKLIGHT_COLOR  114
+#define PERSIST_KEY_WEATHER_FETCH_TS 115
 
 // Battery life estimator state
 // EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
@@ -1526,6 +1527,14 @@ static void init() {
     if (persist_exists(PERSIST_KEY_WEATHER)) {
         s_weather_code = persist_read_int(PERSIST_KEY_WEATHER);
     }
+    // Restore the last weather-fetch timestamp so a relaunch honors the
+    // configured interval instead of firing a fresh fetch immediately.
+    if (persist_exists(PERSIST_KEY_WEATHER_FETCH_TS)) {
+        s_last_weather_fetch = (time_t)persist_read_int(PERSIST_KEY_WEATHER_FETCH_TS);
+        // Guard against a clock moved backwards (timezone / manual set):
+        // a future timestamp would suppress fetches indefinitely.
+        if (s_last_weather_fetch > time(NULL)) s_last_weather_fetch = 0;
+    }
 
     // Restore configuration (set via the settings page)
     if (persist_exists(PERSIST_KEY_NIGHT_MODE)) {
@@ -1609,6 +1618,7 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_TEMP,        s_temp_c);
     persist_write_bool(PERSIST_KEY_TEMP_KNOWN,  s_temp_known);
     persist_write_int (PERSIST_KEY_WEATHER,     s_weather_code);
+    persist_write_int (PERSIST_KEY_WEATHER_FETCH_TS, (int)s_last_weather_fetch);
     persist_write_bool(PERSIST_KEY_NIGHT_MODE,  s_night_mode_enabled);
     persist_write_int (PERSIST_KEY_NIGHT_START, s_night_start_hour);
     persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
