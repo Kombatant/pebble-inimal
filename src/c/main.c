@@ -226,6 +226,7 @@ static void refresh_quiet_time_state_and_canvas(void) {
 #define PERSIST_KEY_BAT_POWERED      113
 #define PERSIST_KEY_BACKLIGHT_COLOR  114
 #define PERSIST_KEY_WEATHER_FETCH_TS 115
+#define PERSIST_KEY_BAT_CHARGE_PCT   116
 
 // Battery life estimator state
 // EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
@@ -235,6 +236,7 @@ static time_t   s_bat_last_ts       = 0;
 static int32_t  s_bat_ewma_milli    = 0;     // 0 == uninitialized
 static bool     s_bat_ewma_init     = false;
 static time_t   s_bat_last_charge_ts = 0;    // Last transition off external power.
+static uint8_t  s_bat_charge_pct     = 100;  // Battery % when last unplugged.
 
 // =============================================================================
 // Drawing helpers
@@ -943,6 +945,26 @@ static void battery_estimator_update(BatteryChargeState state) {
             (int)dpct, (int)dt_sec, (long)rate_milli, (long)s_bat_ewma_milli);
 }
 
+static int32_t battery_since_charge_rate_milli(void) {
+    if (s_battery_is_powered || s_bat_last_charge_ts == 0) {
+        return 0;
+    }
+
+    time_t now = time(NULL);
+    int32_t dt_sec = (int32_t)(now - s_bat_last_charge_ts);
+    if (dt_sec < 180) {
+        return 0;
+    }
+
+    int32_t start_pct = s_bat_charge_pct > 0 ? s_bat_charge_pct : 100;
+    int32_t dpct = start_pct - (int32_t)s_battery_level;
+    if (dpct <= 0) {
+        return 0;
+    }
+
+    return (dpct * 3600 * 1000 + dt_sec / 2) / dt_sec;
+}
+
 // Shared battery duration formatting. Produces "Xd Yh" or "Yh Zm".
 static void battery_duration_format(int32_t total_min, char *buf, size_t n) {
     if (total_min < 0) total_min = 0;
@@ -964,12 +986,17 @@ static void battery_estimator_format(char *buf, size_t n) {
         snprintf(buf, n, "charging");
         return;
     }
-    if (!s_bat_ewma_init || s_bat_ewma_milli <= 0) {
+
+    int32_t rate_milli = battery_since_charge_rate_milli();
+    if (rate_milli <= 0 && s_bat_ewma_init && s_bat_ewma_milli > 0) {
+        rate_milli = s_bat_ewma_milli;
+    }
+    if (rate_milli <= 0) {
         snprintf(buf, n, "—");
         return;
     }
-    // total_minutes = pct * 60 * 1000 / ewma_milli
-    int32_t total_min = ((int32_t)s_battery_level * 60 * 1000) / s_bat_ewma_milli;
+    // total_minutes = pct * 60 * 1000 / rate_milli
+    int32_t total_min = ((int32_t)s_battery_level * 60 * 1000) / rate_milli;
     battery_duration_format(total_min, buf, n);
 }
 
@@ -995,7 +1022,9 @@ static void battery_callback(BatteryChargeState state) {
     s_battery_level = state.charge_percent;
     if (was_powered && !is_powered) {
         s_bat_last_charge_ts = time(NULL);
+        s_bat_charge_pct = state.charge_percent;
         persist_write_int(PERSIST_KEY_BAT_LAST_CHARGE, (int)s_bat_last_charge_ts);
+        persist_write_int(PERSIST_KEY_BAT_CHARGE_PCT, (int)s_bat_charge_pct);
     }
     if (was_powered != is_powered) {
         persist_write_bool(PERSIST_KEY_BAT_POWERED, is_powered);
@@ -1262,7 +1291,8 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         if (app_message_outbox_begin(&out) == APP_MSG_OK) {
             dict_write_cstring(out, MESSAGE_KEY_BATTERY_ESTIMATE, est);
             dict_write_cstring(out, MESSAGE_KEY_BATTERY_SINCE_CHARGE, since_charge);
-            dict_write_int32  (out, MESSAGE_KEY_BATTERY_RATE_MILLI, s_bat_ewma_milli);
+            dict_write_int32  (out, MESSAGE_KEY_BATTERY_RATE_MILLI,
+                               battery_since_charge_rate_milli());
             app_message_outbox_send();
         }
     }
@@ -1579,6 +1609,10 @@ static void init() {
     if (persist_exists(PERSIST_KEY_BAT_LAST_CHARGE)) {
         s_bat_last_charge_ts = (time_t)persist_read_int(PERSIST_KEY_BAT_LAST_CHARGE);
     }
+    if (persist_exists(PERSIST_KEY_BAT_CHARGE_PCT)) {
+        s_bat_charge_pct = (uint8_t)persist_read_int(PERSIST_KEY_BAT_CHARGE_PCT);
+        if (s_bat_charge_pct == 0 || s_bat_charge_pct > 100) s_bat_charge_pct = 100;
+    }
     if (persist_exists(PERSIST_KEY_BAT_POWERED)) {
         s_battery_is_powered = persist_read_bool(PERSIST_KEY_BAT_POWERED);
     }
@@ -1630,6 +1664,7 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_BAT_EWMA_MILLI, (int)s_bat_ewma_milli);
     persist_write_bool(PERSIST_KEY_BAT_EWMA_INIT,  s_bat_ewma_init);
     persist_write_int (PERSIST_KEY_BAT_LAST_CHARGE, (int)s_bat_last_charge_ts);
+    persist_write_int (PERSIST_KEY_BAT_CHARGE_PCT,  (int)s_bat_charge_pct);
     persist_write_bool(PERSIST_KEY_BAT_POWERED,     s_battery_is_powered);
     if (s_seconds_timeout_timer) app_timer_cancel(s_seconds_timeout_timer);
     if (s_seconds_tick_timer) app_timer_cancel(s_seconds_tick_timer);
