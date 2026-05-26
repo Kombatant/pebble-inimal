@@ -119,21 +119,6 @@ var CONFIG_HTML =
 '<option value="1" __FM1__>Larger mode</option>' +
 '</select></div>' +
 
-'<div class="field">' +
-'<div class="toggle">' +
-'<input type="checkbox" id="nightMode" __NIGHT_CHECKED__>' +
-'<label for="nightMode">Night idle mode</label></div>' +
-'<div class="desc">After 20 minutes without wrist movement during your night ' +
-'window, the watchface drops to a 5-minute update cadence to save battery. ' +
-'Shaking your wrist wakes it back up immediately.</div>' +
-'<div id="nightOptions" class="__NIGHT_OPTS_CLASS__">' +
-'<div class="row">' +
-'<div><label for="nightStart">Start</label>' +
-'<input type="time" id="nightStart" value="__NIGHT_START__" step="3600"></div>' +
-'<div><label for="nightEnd">End</label>' +
-'<input type="time" id="nightEnd" value="__NIGHT_END__" step="3600"></div>' +
-'</div></div></div>' +
-
 '<div class="field __BACKLIGHT_FIELD_CLASS__" id="backlightField">' +
 '<label for="backlight">Backlight colour</label>' +
 '<select id="backlight">' +
@@ -149,6 +134,21 @@ var CONFIG_HTML =
 '</div>' +
 
 '<div class="field">' +
+'<div class="toggle">' +
+'<input type="checkbox" id="nightMode" __NIGHT_CHECKED__>' +
+'<label for="nightMode">Night idle mode</label></div>' +
+'<div class="desc">After 20 minutes without wrist movement during your night ' +
+'window, the watchface drops to a 5-minute update cadence to save battery. ' +
+'Shaking your wrist wakes it back up immediately.</div>' +
+'<div id="nightOptions" class="__NIGHT_OPTS_CLASS__">' +
+'<div class="row">' +
+'<div><label for="nightStart">Start</label>' +
+'<input type="time" id="nightStart" value="__NIGHT_START__" step="3600"></div>' +
+'<div><label for="nightEnd">End</label>' +
+'<input type="time" id="nightEnd" value="__NIGHT_END__" step="3600"></div>' +
+'</div></div></div>' +
+
+'<div class="field">' +
 '<label for="weather">Weather refresh</label>' +
 '<select id="weather">' +
 '<option value="15"  __W15__>Every 15 minutes</option>' +
@@ -159,16 +159,18 @@ var CONFIG_HTML =
 '</select></div>' +
 
 '<div class="field">' +
-'<label>Battery</label>' +
+'<label>Battery Stats</label>' +
 '<div class="metric"><span class="name">Time since last charge</span>' +
 '<span class="value">__BAT_SINCE__</span></div>' +
 '<div class="metric"><span class="name">Time remaining</span>' +
 '<span class="value">__BAT_EST__</span></div>' +
 '<div class="metric"><span class="name">Next charge</span>' +
 '<span class="value">__BAT_NEXT__</span></div>' +
-'<div class="desc">Discharge rate: __BAT_RATE__ %/hour ' +
-'(__BAT_RATE_DAY__ %/day). ' +
-'Estimate is learned from your usage; allow a day of wear before it stabilizes.</div>' +
+'<div class="metric"><span class="name">Discharge rate per hour</span>' +
+'<span class="value">__BAT_RATE__</span></div>' +
+'<div class="metric"><span class="name">Discharge rate per day</span>' +
+'<span class="value">__BAT_RATE_DAY__</span></div>' +
+'<div class="desc">Estimate is learned from your usage; allow a day of wear before it stabilizes.</div>' +
 '</div>' +
 
 '<div class="field">' +
@@ -242,8 +244,8 @@ function getBatteryDisplay() {
         rateStr = '—';
         rateDayStr = '—';
     } else {
-        rateStr = (rateMilli / 1000).toFixed(2);
-        rateDayStr = (rateMilli * 24 / 1000).toFixed(1);
+        rateStr = (rateMilli / 1000).toFixed(2) + '%';
+        rateDayStr = (rateMilli * 24 / 1000).toFixed(1) + '%';
     }
 
     // Next-charge date: today + remaining hours from the estimate string.
