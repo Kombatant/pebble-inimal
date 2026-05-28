@@ -138,7 +138,7 @@ var CONFIG_HTML =
 '<input type="checkbox" id="nightMode" __NIGHT_CHECKED__>' +
 '<label for="nightMode">Night idle mode</label></div>' +
 '<div class="desc">After 20 minutes without wrist movement during your night ' +
-'window, the watchface drops to a 5-minute update cadence to save battery. ' +
+'window, the watchface slows display and health updates and pauses weather refreshes. ' +
 'Shaking your wrist wakes it back up immediately.</div>' +
 '<div id="nightOptions" class="__NIGHT_OPTS_CLASS__">' +
 '<div class="row">' +
@@ -146,7 +146,15 @@ var CONFIG_HTML =
 '<input type="time" id="nightStart" value="__NIGHT_START__" step="3600"></div>' +
 '<div><label for="nightEnd">End</label>' +
 '<input type="time" id="nightEnd" value="__NIGHT_END__" step="3600"></div>' +
-'</div></div></div>' +
+'</div>' +
+'<label for="nightUpdate">Update cadence</label>' +
+'<select id="nightUpdate">' +
+'<option value="3"  __NU3__>Every 3 minutes</option>' +
+'<option value="5"  __NU5__>Every 5 minutes</option>' +
+'<option value="10" __NU10__>Every 10 minutes</option>' +
+'<option value="15" __NU15__>Every 15 minutes</option>' +
+'</select>' +
+'</div></div>' +
 
 '<div class="field">' +
 '<label for="weather">Weather refresh</label>' +
@@ -191,6 +199,7 @@ var CONFIG_HTML =
 'var d={NIGHT_MODE_ENABLED:t.checked?1:0,' +
 'NIGHT_START_HOUR:hourFromTime(document.getElementById("nightStart").value),' +
 'NIGHT_END_HOUR:hourFromTime(document.getElementById("nightEnd").value),' +
+'NIGHT_UPDATE_INTERVAL:parseInt(document.getElementById("nightUpdate").value,10),' +
 'FACE_MODE:parseInt(document.getElementById("faceMode").value,10),' +
 'WEATHER_INTERVAL:parseInt(document.getElementById("weather").value,10)};' +
 'var bf=document.getElementById("backlightField");' +
@@ -204,6 +213,7 @@ function getStoredSettings() {
         nightMode:  localStorage.getItem('nightMode')  === '1',  // default false
         nightStart: parseInt(localStorage.getItem('nightStart') || '0', 10),
         nightEnd:   parseInt(localStorage.getItem('nightEnd')   || '6', 10),
+        nightUpdate: validNightUpdate(parseInt(localStorage.getItem('nightUpdate') || '5', 10)),
         weather:    parseInt(localStorage.getItem('weather')    || '30', 10),
         faceMode:   parseInt(localStorage.getItem('faceMode')   || '1', 10),
         backlight:  parseInt(localStorage.getItem('backlight')  || '0', 10)
@@ -221,6 +231,10 @@ function isEmery() {
 }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function validNightUpdate(n) {
+    return (n === 3 || n === 5 || n === 10 || n === 15) ? n : 5;
+}
 
 // Parse a "Xd Yh" or "Yh Zm" duration string into total hours.
 // Returns null if the string is not a parseable estimate.
@@ -272,6 +286,10 @@ function buildConfigUrl() {
         .replace('__NIGHT_OPTS_CLASS__', s.nightMode ? '' : 'hidden')
         .replace('__NIGHT_START__',      pad2(s.nightStart) + ':00')
         .replace('__NIGHT_END__',        pad2(s.nightEnd)   + ':00')
+        .replace('__NU3__',  s.nightUpdate === 3  ? 'selected' : '')
+        .replace('__NU5__',  s.nightUpdate === 5  ? 'selected' : '')
+        .replace('__NU10__', s.nightUpdate === 10 ? 'selected' : '')
+        .replace('__NU15__', s.nightUpdate === 15 ? 'selected' : '')
         .replace('__FM0__',  s.faceMode === 0 ? 'selected' : '')
         .replace('__FM1__',  s.faceMode === 1 ? 'selected' : '')
         .replace('__W15__',  s.weather === 15  ? 'selected' : '')
@@ -315,6 +333,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
         localStorage.setItem('nightMode',  settings.NIGHT_MODE_ENABLED ? '1' : '0');
         localStorage.setItem('nightStart', String(settings.NIGHT_START_HOUR));
         localStorage.setItem('nightEnd',   String(settings.NIGHT_END_HOUR));
+        localStorage.setItem('nightUpdate', String(settings.NIGHT_UPDATE_INTERVAL));
         localStorage.setItem('weather',    String(settings.WEATHER_INTERVAL));
         localStorage.setItem('faceMode',   String(settings.FACE_MODE || 0));
         if (typeof settings.BACKLIGHT_COLOR !== 'undefined') {

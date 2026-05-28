@@ -148,6 +148,7 @@ static int s_weather_code = -1;   // -1 = unknown, otherwise WMO code from Open-
 static bool s_night_mode_enabled  = false;   // default: OFF (user opts in)
 static int  s_night_start_hour    = 0;       // 00:00 = midnight
 static int  s_night_end_hour      = 6;       // 06:00 = 6 AM
+static int  s_night_update_interval_min = 5;
 static int  s_weather_interval_min = 30;
 
 typedef enum {
@@ -227,6 +228,7 @@ static void refresh_quiet_time_state_and_canvas(void) {
 #define PERSIST_KEY_BACKLIGHT_COLOR  114
 #define PERSIST_KEY_WEATHER_FETCH_TS 115
 #define PERSIST_KEY_BAT_CHARGE_PCT   116
+#define PERSIST_KEY_NIGHT_UPDATE_INT 117
 
 // Battery life estimator state
 // EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
@@ -1052,6 +1054,10 @@ static bool hour_in_night_window(int hour, int start, int end) {
     return hour >= start || hour < end;       // wrap-around
 }
 
+static bool is_valid_night_update_interval(int minutes) {
+    return minutes == 3 || minutes == 5 || minutes == 10 || minutes == 15;
+}
+
 static bool is_night_idle(struct tm *now) {
     if (!s_night_mode_enabled) return false;
     if (!hour_in_night_window(now->tm_hour, s_night_start_hour, s_night_end_hour)) {
@@ -1072,8 +1078,10 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     refresh_quiet_time_state_and_canvas();
 
     if (units_changed & MINUTE_UNIT) {
-        // Skip everything for 4 of every 5 minutes when night-idle
-        if (is_night_idle(tick_time) && (tick_time->tm_min % 5 != 0)) {
+        bool night_idle = is_night_idle(tick_time);
+
+        // Skip periodic display/health work between configured night-idle ticks.
+        if (night_idle && (tick_time->tm_min % s_night_update_interval_min != 0)) {
             return;
         }
 
@@ -1085,7 +1093,7 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
         // works correctly for intervals longer than an hour (where the old
         // "minute % N == 0" check would never fire).
         time_t now = time(NULL);
-        if (now - s_last_weather_fetch >= s_weather_interval_min * 60) {
+        if (!night_idle && now - s_last_weather_fetch >= s_weather_interval_min * 60) {
             DictionaryIterator *iter;
             if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
                 dict_write_uint8(iter, MESSAGE_KEY_REQUEST_WEATHER, 1);
@@ -1209,14 +1217,18 @@ static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
 static void apply_face_mode_layout(GRect bounds);
 
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
+    time_t current = time(NULL);
+    struct tm *now = localtime(&current);
+    bool night_idle = now && is_night_idle(now);
+
     Tuple *t = dict_find(iterator, MESSAGE_KEY_TEMPERATURE);
-    if (t) {
+    if (t && !night_idle) {
         s_temp_c = (int)t->value->int32;
         s_temp_known = true;
         update_time_and_date();   // re-renders date row with new temp
     }
     Tuple *wc = dict_find(iterator, MESSAGE_KEY_WEATHER_CODE);
-    if (wc) {
+    if (wc && !night_idle) {
         s_weather_code = (int)wc->value->int32;
         if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
     }
@@ -1244,6 +1256,15 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
             s_night_end_hour = v;
             persist_write_int(PERSIST_KEY_NIGHT_END, s_night_end_hour);
             APP_LOG(APP_LOG_LEVEL_INFO, "Night end: %d:00", v);
+        }
+    }
+    Tuple *night_interval = dict_find(iterator, MESSAGE_KEY_NIGHT_UPDATE_INTERVAL);
+    if (night_interval) {
+        int v = (int)night_interval->value->int32;
+        if (is_valid_night_update_interval(v)) {
+            s_night_update_interval_min = v;
+            persist_write_int(PERSIST_KEY_NIGHT_UPDATE_INT, s_night_update_interval_min);
+            APP_LOG(APP_LOG_LEVEL_INFO, "Night update interval: %d min", v);
         }
     }
     Tuple *interval = dict_find(iterator, MESSAGE_KEY_WEATHER_INTERVAL);
@@ -1576,6 +1597,12 @@ static void init() {
     if (persist_exists(PERSIST_KEY_NIGHT_END)) {
         s_night_end_hour = persist_read_int(PERSIST_KEY_NIGHT_END);
     }
+    if (persist_exists(PERSIST_KEY_NIGHT_UPDATE_INT)) {
+        int interval = persist_read_int(PERSIST_KEY_NIGHT_UPDATE_INT);
+        if (is_valid_night_update_interval(interval)) {
+            s_night_update_interval_min = interval;
+        }
+    }
     if (persist_exists(PERSIST_KEY_WEATHER_INT)) {
         s_weather_interval_min = persist_read_int(PERSIST_KEY_WEATHER_INT);
     }
@@ -1656,6 +1683,7 @@ static void deinit() {
     persist_write_bool(PERSIST_KEY_NIGHT_MODE,  s_night_mode_enabled);
     persist_write_int (PERSIST_KEY_NIGHT_START, s_night_start_hour);
     persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
+    persist_write_int (PERSIST_KEY_NIGHT_UPDATE_INT, s_night_update_interval_min);
     persist_write_int (PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
     persist_write_int (PERSIST_KEY_FACE_MODE,   (int)s_face_mode);
     persist_write_int (PERSIST_KEY_BACKLIGHT_COLOR, (int)s_backlight_color);

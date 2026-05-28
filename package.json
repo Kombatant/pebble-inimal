@@ -18,6 +18,7 @@
             "NIGHT_MODE_ENABLED",
             "NIGHT_START_HOUR",
             "NIGHT_END_HOUR",
+            "NIGHT_UPDATE_INTERVAL",
             "WEATHER_INTERVAL",
             "FACE_MODE",
             "REQUEST_BATTERY_INFO",
@@ -176,5 +177,5 @@
             "watchface": true
         }
     },
-    "version": "0.8.2"
+    "version": "0.8.3"
 }
