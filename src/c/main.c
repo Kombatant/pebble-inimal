@@ -60,6 +60,12 @@
 #define LARGE_STATS_Y           132
 #define LARGE_STATS_H           44
 #define LARGE_STAT_CENTER_Y     (LARGE_STATS_Y + LARGE_STATS_H / 2)
+// Value text + icon both vertically centered inside the stat card. The glyph
+// renders in the upper part of its text box, so the box top is raised above
+// the card center to bring the glyph's optical center onto LARGE_STAT_CENTER_Y.
+#define LARGE_STAT_VALUE_H      32
+#define LARGE_STAT_VALUE_Y      (LARGE_STAT_CENTER_Y - LARGE_STAT_VALUE_H / 2 + 2)
+#define LARGE_STAT_ICON_CY      LARGE_STAT_CENTER_Y
 #define LARGE_CARD_W            82
 #define LARGE_CARD_GAP          8
 #define LARGE_LEFT_CARD_X       LARGE_INSET
@@ -462,16 +468,18 @@ static void draw_heart(GContext *ctx, int cx, int cy, GColor color) {
 
 // Heart icon sized to match 24x24 step icon bbox.
 // Lobes radius 6, centers at (cx±6, cy-4); triangle tip at cy+14.
+// Heart sized to fit a 24x24 box centered on (cx, cy), matching the 24x24
+// steps icon for visual uniformity. Lobes span the top half, point at bottom.
 static void draw_heart_large(GContext *ctx, int cx, int cy, GColor color) {
     graphics_context_set_fill_color(ctx, color);
-    graphics_fill_circle(ctx, GPoint(cx - 6, cy - 4), 6);
-    graphics_fill_circle(ctx, GPoint(cx + 6, cy - 4), 6);
+    graphics_fill_circle(ctx, GPoint(cx - 6, cy - 6), 6);
+    graphics_fill_circle(ctx, GPoint(cx + 6, cy - 6), 6);
     GPathInfo info = {
         .num_points = 3,
         .points = (GPoint[]) {
-            { (int16_t)(cx - 12), (int16_t)(cy - 2) },
-            { (int16_t)(cx + 12), (int16_t)(cy - 2) },
-            { (int16_t)cx,        (int16_t)(cy + 14) }
+            { (int16_t)(cx - 12), (int16_t)(cy - 4) },
+            { (int16_t)(cx + 12), (int16_t)(cy - 4) },
+            { (int16_t)cx,        (int16_t)(cy + 12) }
         }
     };
     GPath *p = gpath_create(&info);
@@ -556,10 +564,11 @@ static GBitmap *get_battery_bitmap(void) {
 // =============================================================================
 // Canvas update procedure
 // =============================================================================
+static GColor get_large_battery_color(void);
+
 static void draw_larger_canvas(GContext *ctx, int W, int H) {
     GColor dim = GColorDarkGray;
     GColor red = COLOR_FALLBACK(GColorMelon, GColorWhite);
-    GColor green = COLOR_FALLBACK(GColorScreaminGreen, GColorWhite);
 
     draw_tick_marks(ctx, W, H);
     draw_weather_icon_small(ctx, 25, 24, s_weather_code);
@@ -583,10 +592,10 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
     graphics_context_set_compositing_mode(ctx, GCompOpSet);
     if (s_steps_bitmap) {
         graphics_draw_bitmap_in_rect(ctx, s_steps_bitmap,
-                                     GRect(LARGE_LEFT_CARD_X + 3, LARGE_STAT_CENTER_Y - 12, 24, 24));
+                                     GRect(LARGE_LEFT_CARD_X + 3, LARGE_STAT_ICON_CY - 12, 24, 24));
     }
 
-    draw_heart_large(ctx, LARGE_RIGHT_CARD_X + 20, LARGE_STAT_CENTER_Y, red);
+    draw_heart_large(ctx, LARGE_RIGHT_CARD_X + 20, LARGE_STAT_ICON_CY, red);
 
     GBitmap *bt = s_bt_connected ? s_bt_on_bitmap : s_bt_off_bitmap;
     if (bt) {
@@ -616,8 +625,7 @@ static void draw_larger_canvas(GContext *ctx, int W, int H) {
     int fill_w = (bar_w * s_battery_level) / 100;
     if (s_battery_level > 0 && fill_w < bar_h) fill_w = bar_h;
     if (fill_w > 0) {
-        graphics_context_set_fill_color(ctx,
-            s_battery_level <= 20 ? red : green);
+        graphics_context_set_fill_color(ctx, get_large_battery_color());
         graphics_fill_rect(ctx, GRect(bar_x, LARGE_BATTERY_BAR_Y, fill_w, bar_h),
                            bar_h / 2, GCornersAll);
     }
@@ -671,9 +679,9 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
     if (s_battery_level > 0) {
         int fill_w = (BAR_WIDTH * s_battery_level) / 100;
         if (fill_w < BAR_HEIGHT) fill_w = BAR_HEIGHT;   // keep the pill cap visible
-        GColor fill_color = (s_battery_level <= 20)
-            ? COLOR_FALLBACK(GColorRed, GColorWhite)
-            : GColorWhite;
+        GColor fill_color = GColorWhite;
+        if (s_battery_level <= 15)      fill_color = COLOR_FALLBACK(GColorRed, GColorWhite);
+        else if (s_battery_level <= 30) fill_color = COLOR_FALLBACK(GColorYellow, GColorWhite);
         graphics_context_set_fill_color(ctx, fill_color);
         graphics_fill_rect(ctx, GRect(bar_x, BAR_Y, fill_w, BAR_HEIGHT),
                            corner_radius, GCornersAll);
@@ -768,6 +776,8 @@ static void update_time_from_tm(struct tm *now, bool update_seconds) {
     render_time();
 }
 
+static GColor get_temp_color(void);
+
 static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
     update_time_from_tm(now, update_seconds);
 
@@ -784,6 +794,7 @@ static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
                  s_temp_known ? "%d\u00B0C" : "--\u00B0C", s_temp_c);
         if (s_temp_layer) {
             text_layer_set_text(s_temp_layer, s_temp_buffer);
+            text_layer_set_text_color(s_temp_layer, get_temp_color());
         }
     } else {
         if (s_temp_known) {
@@ -870,10 +881,20 @@ static void update_health_data() {
 // =============================================================================
 // Battery service
 // =============================================================================
+// Temperature hue: cyan when cold (<5C), amber when warm (>25C), white otherwise.
+// Unknown temp stays white.
+static GColor get_temp_color(void) {
+    if (!s_temp_known) return GColorWhite;
+    if (s_temp_c < 5)  return COLOR_FALLBACK(GColorVividCerulean, GColorWhite);
+    if (s_temp_c > 25) return COLOR_FALLBACK(GColorYellow, GColorWhite);
+    return GColorWhite;
+}
+
+// 3-step battery status: red <=15% (critical), amber <=30% (warn), green otherwise.
 static GColor get_large_battery_color(void) {
-    return s_battery_level <= 20
-        ? COLOR_FALLBACK(GColorMelon, GColorWhite)
-        : COLOR_FALLBACK(GColorScreaminGreen, GColorWhite);
+    if (s_battery_level <= 15) return COLOR_FALLBACK(GColorMelon, GColorWhite);
+    if (s_battery_level <= 30) return COLOR_FALLBACK(GColorYellow, GColorWhite);
+    return COLOR_FALLBACK(GColorScreaminGreen, GColorWhite);
 }
 
 // =============================================================================
@@ -1375,7 +1396,7 @@ static void apply_face_mode_layout(GRect bounds) {
     text_layer_set_font(s_km_label_layer, s_font_small);
 
     layer_set_frame(text_layer_get_layer(s_steps_value_layer),
-                    large ? GRect(42, LARGE_STATS_Y + 8, 50, 32)
+                    large ? GRect(42, LARGE_STAT_VALUE_Y, 50, LARGE_STAT_VALUE_H)
                           : GRect(10, STATS_VALUE_Y, 60, 22));
     text_layer_set_font(s_steps_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_steps_value_layer, GColorWhite);
@@ -1383,7 +1404,7 @@ static void apply_face_mode_layout(GRect bounds) {
                                   large ? GTextAlignmentLeft : GTextAlignmentCenter);
 
     layer_set_frame(text_layer_get_layer(s_hr_value_layer),
-                    large ? GRect(146, LARGE_STATS_Y + 8, 38, 32)
+                    large ? GRect(146, LARGE_STAT_VALUE_Y, 38, LARGE_STAT_VALUE_H)
                           : GRect(0, STATS_VALUE_Y, W, 22));
     text_layer_set_font(s_hr_value_layer, large ? s_font_stat_large : s_font_stat);
     text_layer_set_text_color(s_hr_value_layer, large ? red : GColorWhite);
@@ -1399,7 +1420,7 @@ static void apply_face_mode_layout(GRect bounds) {
     layer_set_frame(text_layer_get_layer(s_temp_layer),
                     GRect(48, LARGE_TOP_Y, 56, LARGE_TOP_H));
     text_layer_set_font(s_temp_layer, s_font_top);
-    text_layer_set_text_color(s_temp_layer, GColorWhite);
+    text_layer_set_text_color(s_temp_layer, get_temp_color());
     text_layer_set_text_alignment(s_temp_layer, GTextAlignmentLeft);
 
     layer_set_frame(text_layer_get_layer(s_seconds_layer),
