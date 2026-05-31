@@ -71,8 +71,27 @@ Pebble.addEventListener('appmessage', function (e) {
         console.log('Battery info: ' + e.payload.BATTERY_ESTIMATE +
                     ', since charge ' + e.payload.BATTERY_SINCE_CHARGE +
                     ' (' + e.payload.BATTERY_RATE_MILLI + ' m%/h)');
+        // Fresh values arrived — if the config page is waiting on them, open
+        // it now so the user sees current data instead of the stale cache.
+        openConfigWhenReady();
     }
 });
+
+// Config-page open is deferred until fresh battery info arrives (or a short
+// timeout elapses), so the page never shows stale battery stats. These guard
+// against opening twice or leaving a stale timer behind.
+var configOpenPending = false;
+var configOpenTimer = null;
+
+function openConfigWhenReady() {
+    if (!configOpenPending) { return; }
+    configOpenPending = false;
+    if (configOpenTimer !== null) {
+        clearTimeout(configOpenTimer);
+        configOpenTimer = null;
+    }
+    Pebble.openURL(buildConfigUrl());
+}
 
 // =============================================================================
 // Configuration page
@@ -315,14 +334,25 @@ function buildConfigUrl() {
 }
 
 Pebble.addEventListener('showConfiguration', function () {
-    // Ask watch for fresh estimate; it arrives async via 'appmessage'.
-    // The user sees cached values immediately and refreshed values on
-    // their next config-page open.
+    // Ask the watch for a fresh estimate, then defer opening the page until it
+    // arrives via 'appmessage' (see openConfigWhenReady). A timeout fallback
+    // opens with cached values if the watch is slow or disconnected, so the
+    // page always opens promptly.
+    configOpenPending = true;
+    if (configOpenTimer !== null) { clearTimeout(configOpenTimer); }
+    configOpenTimer = setTimeout(function () {
+        configOpenTimer = null;
+        openConfigWhenReady();
+    }, 1500);
+
     Pebble.sendAppMessage({ 'REQUEST_BATTERY_INFO': 1 },
         function ()  { console.log('Battery info requested'); },
-        function (e) { console.log('Battery info request failed: ' + JSON.stringify(e)); }
+        function (e) {
+            console.log('Battery info request failed: ' + JSON.stringify(e));
+            // Watch unreachable — open immediately with cached values.
+            openConfigWhenReady();
+        }
     );
-    Pebble.openURL(buildConfigUrl());
 });
 
 Pebble.addEventListener('webviewclosed', function (e) {
