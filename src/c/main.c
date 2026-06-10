@@ -12,6 +12,7 @@
 
 #include <pebble.h>
 #include <ctype.h>
+#include <string.h>
 
 // ---------- Layout constants (Emery is 200 x 228) -----------------------------
 // Vertical rhythm: each section sits a few px below the one above so the face
@@ -110,6 +111,42 @@ static GBitmap *s_bt_off_bitmap;
 static GBitmap *s_dnd_bitmap;
 static GBitmap *s_steps_bitmap;
 
+// Filled-shape paths, created once at window load. Allocating and freeing
+// GPaths inside the canvas update proc would churn the heap on every frame.
+// Point coordinates are relative to the shape's anchor; gpath_move_to()
+// positions them per draw call.
+static GPath *s_heart_path;
+static GPath *s_heart_large_path;
+static GPath *s_arrow_left_path;
+static GPath *s_arrow_right_path;
+static GPath *s_bolt_path;
+static GPath *s_bolt_small_path;
+
+static const GPathInfo HEART_PATH_INFO = {
+    .num_points = 3,
+    .points = (GPoint[]) { {-8, -1}, {8, -1}, {0, 8} }
+};
+static const GPathInfo HEART_LARGE_PATH_INFO = {
+    .num_points = 3,
+    .points = (GPoint[]) { {-12, -4}, {12, -4}, {0, 12} }
+};
+static const GPathInfo ARROW_LEFT_PATH_INFO = {
+    .num_points = 3,
+    .points = (GPoint[]) { {0, -4}, {0, 4}, {-6, 0} }
+};
+static const GPathInfo ARROW_RIGHT_PATH_INFO = {
+    .num_points = 3,
+    .points = (GPoint[]) { {0, -4}, {0, 4}, {6, 0} }
+};
+static const GPathInfo BOLT_PATH_INFO = {
+    .num_points = 5,
+    .points = (GPoint[]) { {1, 7}, {-5, 14}, {0, 14}, {-4, 19}, {5, 11} }
+};
+static const GPathInfo BOLT_SMALL_PATH_INFO = {
+    .num_points = 5,
+    .points = (GPoint[]) { {1, 6}, {-4, 11}, {0, 11}, {-3, 15}, {4, 9} }
+};
+
 // Bluetooth connection state
 static bool s_bt_connected = true;
 static bool s_quiet_time_active = false;
@@ -124,6 +161,29 @@ static char s_hr_buffer[12];
 static char s_dist_buffer[16];
 static char s_battery_text_buffer[8];
 static int s_last_hr_bpm = 0;
+
+// Last text actually handed to each TextLayer. text_layer_set_text marks the
+// layer dirty even when the string is identical, and every dirty layer costs
+// a render pass + display push — so periodic updates go through
+// set_text_if_changed() and unchanged layers stay out of the frame.
+static char s_time_cache[12];
+static char s_date_cache[32];
+static char s_temp_cache[8];
+static char s_steps_cache[12];
+static char s_hr_cache[12];
+static char s_dist_cache[16];
+static char s_battery_text_cache[8];
+static uint8_t s_temp_color_cache = 0;
+
+static void set_text_if_changed(TextLayer *layer, const char *text,
+                                char *cache, size_t cache_size) {
+    if (!layer || strcmp(cache, text) == 0) {
+        return;
+    }
+    strncpy(cache, text, cache_size - 1);
+    cache[cache_size - 1] = '\0';
+    text_layer_set_text(layer, text);
+}
 
 // Cached time components used by the unified time renderer.
 // s_displayed_seconds is the value currently painted on the watch — it's
@@ -326,21 +386,10 @@ static void draw_snow(GContext *ctx, int cx, int cy) {
 
 static void draw_thunderstorm(GContext *ctx, int cx, int cy) {
     draw_cloud_only(ctx, cx, cy - 4, COLOR_FALLBACK(GColorLightGray, GColorWhite));
-    GPathInfo bolt = {
-        .num_points = 5,
-        .points = (GPoint[]) {
-            { (int16_t)(cx + 1), (int16_t)(cy + 7)  },
-            { (int16_t)(cx - 5), (int16_t)(cy + 14) },
-            { (int16_t)(cx),     (int16_t)(cy + 14) },
-            { (int16_t)(cx - 4), (int16_t)(cy + 19) },
-            { (int16_t)(cx + 5), (int16_t)(cy + 11) }
-        }
-    };
-    GPath *p = gpath_create(&bolt);
-    if (p) {
+    if (s_bolt_path) {
+        gpath_move_to(s_bolt_path, GPoint(cx, cy));
         graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
-        gpath_draw_filled(ctx, p);
-        gpath_destroy(p);
+        gpath_draw_filled(ctx, s_bolt_path);
     }
 }
 
@@ -416,21 +465,10 @@ static void draw_snow_small(GContext *ctx, int cx, int cy) {
 
 static void draw_thunderstorm_small(GContext *ctx, int cx, int cy) {
     draw_cloud_only_small(ctx, cx, cy - 3, COLOR_FALLBACK(GColorLightGray, GColorWhite));
-    GPathInfo bolt = {
-        .num_points = 5,
-        .points = (GPoint[]) {
-            { (int16_t)(cx + 1), (int16_t)(cy + 6)  },
-            { (int16_t)(cx - 4), (int16_t)(cy + 11) },
-            { (int16_t)(cx),     (int16_t)(cy + 11) },
-            { (int16_t)(cx - 3), (int16_t)(cy + 15) },
-            { (int16_t)(cx + 4), (int16_t)(cy + 9)  }
-        }
-    };
-    GPath *p = gpath_create(&bolt);
-    if (p) {
+    if (s_bolt_small_path) {
+        gpath_move_to(s_bolt_small_path, GPoint(cx, cy));
         graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
-        gpath_draw_filled(ctx, p);
-        gpath_destroy(p);
+        gpath_draw_filled(ctx, s_bolt_small_path);
     }
 }
 
@@ -454,16 +492,10 @@ static void draw_heart(GContext *ctx, int cx, int cy, GColor color) {
     graphics_context_set_fill_color(ctx, color);
     graphics_fill_circle(ctx, GPoint(cx - 4, cy - 2), 4);
     graphics_fill_circle(ctx, GPoint(cx + 4, cy - 2), 4);
-    GPathInfo info = {
-        .num_points = 3,
-        .points = (GPoint[]) {
-            { (int16_t)(cx - 8), (int16_t)(cy - 1) },
-            { (int16_t)(cx + 8), (int16_t)(cy - 1) },
-            { (int16_t)(cx),     (int16_t)(cy + 8) }
-        }
-    };
-    GPath *p = gpath_create(&info);
-    if (p) { gpath_draw_filled(ctx, p); gpath_destroy(p); }
+    if (s_heart_path) {
+        gpath_move_to(s_heart_path, GPoint(cx, cy));
+        gpath_draw_filled(ctx, s_heart_path);
+    }
 }
 
 // Heart icon sized to match 24x24 step icon bbox.
@@ -474,46 +506,40 @@ static void draw_heart_large(GContext *ctx, int cx, int cy, GColor color) {
     graphics_context_set_fill_color(ctx, color);
     graphics_fill_circle(ctx, GPoint(cx - 6, cy - 6), 6);
     graphics_fill_circle(ctx, GPoint(cx + 6, cy - 6), 6);
-    GPathInfo info = {
-        .num_points = 3,
-        .points = (GPoint[]) {
-            { (int16_t)(cx - 12), (int16_t)(cy - 4) },
-            { (int16_t)(cx + 12), (int16_t)(cy - 4) },
-            { (int16_t)cx,        (int16_t)(cy + 12) }
-        }
-    };
-    GPath *p = gpath_create(&info);
-    if (p) { gpath_draw_filled(ctx, p); gpath_destroy(p); }
+    if (s_heart_large_path) {
+        gpath_move_to(s_heart_large_path, GPoint(cx, cy));
+        gpath_draw_filled(ctx, s_heart_large_path);
+    }
 }
 
 static void draw_arrow(GContext *ctx, int x, int y, bool point_left) {
-    int dx = point_left ? -6 : 6;
-    GPathInfo info = {
-        .num_points = 3,
-        .points = (GPoint[]) {
-            { (int16_t)x,       (int16_t)(y - 4) },
-            { (int16_t)x,       (int16_t)(y + 4) },
-            { (int16_t)(x + dx),(int16_t)y }
-        }
-    };
-    GPath *p = gpath_create(&info);
-    if (p) { gpath_draw_filled(ctx, p); gpath_destroy(p); }
+    GPath *p = point_left ? s_arrow_left_path : s_arrow_right_path;
+    if (p) {
+        gpath_move_to(p, GPoint(x, y));
+        gpath_draw_filled(ctx, p);
+    }
 }
 
-// Draw 60 tick marks around the rectangular perimeter, every 5th tick longer
-// & brighter to mark hour positions.
-static void draw_tick_marks(GContext *ctx, int W, int H) {
+// 60 tick marks around the rectangular perimeter, every 5th tick longer
+// & brighter to mark hour positions. The canvas update proc runs on every
+// render pass, so the endpoint geometry is computed once per display size
+// and cached; drawing is two passes so stroke state is set once per style.
+typedef struct {
+    GPoint p0;
+    GPoint p1;
+} TickMark;
+
+static TickMark s_tick_marks[60];
+static int s_tick_marks_w = 0;
+static int s_tick_marks_h = 0;
+
+static void build_tick_marks(int W, int H) {
     int perim = 2 * (W + H);
     int half_top = W / 2;
 
     for (int i = 0; i < 60; i++) {
         int p = (perim * i) / 60;
-        bool is_hour = (i % 5 == 0);
-        int len     = is_hour ? 7 : 3;
-        GColor color = is_hour ? GColorWhite : GColorDarkGray;
-
-        graphics_context_set_stroke_color(ctx, color);
-        graphics_context_set_stroke_width(ctx, is_hour ? 2 : 1);
+        int len = (i % 5 == 0) ? 7 : 3;
 
         int x0, y0, x1, y1;
 
@@ -538,7 +564,33 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
             x0 = p - (half_top + H + W + H); y0 = 0;
             x1 = x0;                          y1 = len;
         }
-        graphics_draw_line(ctx, GPoint(x0, y0), GPoint(x1, y1));
+        s_tick_marks[i] = (TickMark){
+            .p0 = GPoint(x0, y0),
+            .p1 = GPoint(x1, y1)
+        };
+    }
+    s_tick_marks_w = W;
+    s_tick_marks_h = H;
+}
+
+static void draw_tick_marks(GContext *ctx, int W, int H) {
+    if (s_tick_marks_w != W || s_tick_marks_h != H) {
+        build_tick_marks(W, H);
+    }
+
+    // Minute ticks
+    graphics_context_set_stroke_color(ctx, GColorDarkGray);
+    graphics_context_set_stroke_width(ctx, 1);
+    for (int i = 0; i < 60; i++) {
+        if (i % 5 == 0) continue;
+        graphics_draw_line(ctx, s_tick_marks[i].p0, s_tick_marks[i].p1);
+    }
+
+    // Hour ticks
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+    graphics_context_set_stroke_width(ctx, 2);
+    for (int i = 0; i < 60; i += 5) {
+        graphics_draw_line(ctx, s_tick_marks[i].p0, s_tick_marks[i].p1);
     }
 
     // Reset stroke width so other drawing isn't affected
@@ -751,20 +803,22 @@ static void render_time(void) {
     if (s_face_mode == FaceModeLarger) {
         snprintf(s_time_buffer, sizeof(s_time_buffer), "%02d:%02d",
                  s_displayed_hour, s_displayed_min);
-        if (s_seconds_active) {
-            snprintf(s_seconds_buffer, sizeof(s_seconds_buffer), "%02d",
-                     s_displayed_seconds);
-        } else {
-            s_seconds_buffer[0] = '\0';
-        }
         if (s_seconds_layer) {
-            text_layer_set_text(s_seconds_layer, s_seconds_buffer);
+            if (s_seconds_active) {
+                snprintf(s_seconds_buffer, sizeof(s_seconds_buffer), "%02d",
+                         s_displayed_seconds);
+                text_layer_set_text(s_seconds_layer, s_seconds_buffer);
+            } else if (s_seconds_buffer[0]) {
+                s_seconds_buffer[0] = '\0';
+                text_layer_set_text(s_seconds_layer, s_seconds_buffer);
+            }
         }
     } else {
         snprintf(s_time_buffer, sizeof(s_time_buffer), "%02d:%02d:%02d",
                  s_displayed_hour, s_displayed_min, s_displayed_seconds);
     }
-    text_layer_set_text(s_time_layer, s_time_buffer);
+    set_text_if_changed(s_time_layer, s_time_buffer,
+                        s_time_cache, sizeof(s_time_cache));
 }
 
 static void update_time_from_tm(struct tm *now, bool update_seconds) {
@@ -778,8 +832,13 @@ static void update_time_from_tm(struct tm *now, bool update_seconds) {
 
 static GColor get_temp_color(void);
 
+// Day-of-year last rendered by the full date path; lets the accel-tap
+// handler skip the date/temp work unless the day actually rolled over.
+static int s_rendered_yday = -1;
+
 static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
     update_time_from_tm(now, update_seconds);
+    s_rendered_yday = now->tm_yday;
 
     char day_buf[3], wday_buf[6];
     strftime(day_buf,  sizeof(day_buf),  "%d", now);
@@ -793,8 +852,13 @@ static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
         snprintf(s_temp_buffer, sizeof(s_temp_buffer),
                  s_temp_known ? "%d\u00B0C" : "--\u00B0C", s_temp_c);
         if (s_temp_layer) {
-            text_layer_set_text(s_temp_layer, s_temp_buffer);
-            text_layer_set_text_color(s_temp_layer, get_temp_color());
+            set_text_if_changed(s_temp_layer, s_temp_buffer,
+                                s_temp_cache, sizeof(s_temp_cache));
+            GColor temp_color = get_temp_color();
+            if (temp_color.argb != s_temp_color_cache) {
+                s_temp_color_cache = temp_color.argb;
+                text_layer_set_text_color(s_temp_layer, temp_color);
+            }
         }
     } else {
         if (s_temp_known) {
@@ -805,7 +869,8 @@ static void update_time_and_date_from_tm(struct tm *now, bool update_seconds) {
                      "%s %s.  |  --\u00B0C", day_buf, wday_buf);
         }
     }
-    text_layer_set_text(s_date_layer, s_date_buffer);
+    set_text_if_changed(s_date_layer, s_date_buffer,
+                        s_date_cache, sizeof(s_date_cache));
 }
 
 static void update_time_and_date() {
@@ -815,16 +880,38 @@ static void update_time_and_date() {
     update_time_and_date_from_tm(now, false);
 }
 
+// Timestamp of the last completed health refresh; the accel-tap handler uses
+// it to skip redundant deferred refreshes (the minute tick refreshes anyway).
+static time_t s_last_health_update = 0;
+
+#if defined(PBL_HEALTH)
+// Metric accessibility can't change mid-day, so re-query it only when the
+// day rolls over instead of twice per minute.
+static int  s_health_access_yday = -1;
+static bool s_steps_accessible   = false;
+static bool s_dist_accessible    = false;
+#endif
+
 static void update_health_data() {
 #if defined(PBL_HEALTH)
     time_t start = time_start_of_today();
     time_t end   = time(NULL);
+    s_last_health_update = end;
+
+    struct tm *now = localtime(&end);
+    if (now && now->tm_yday != s_health_access_yday) {
+        s_health_access_yday = now->tm_yday;
+        s_steps_accessible =
+            (health_service_metric_accessible(HealthMetricStepCount, start, end)
+             & HealthServiceAccessibilityMaskAvailable) != 0;
+        s_dist_accessible =
+            (health_service_metric_accessible(HealthMetricWalkedDistanceMeters, start, end)
+             & HealthServiceAccessibilityMaskAvailable) != 0;
+    }
 
     // Steps today
-    HealthMetric m_steps = HealthMetricStepCount;
-    if (health_service_metric_accessible(m_steps, start, end)
-        & HealthServiceAccessibilityMaskAvailable) {
-        int steps = (int)health_service_sum_today(m_steps);
+    if (s_steps_accessible) {
+        int steps = (int)health_service_sum_today(HealthMetricStepCount);
         snprintf(s_steps_buffer, sizeof(s_steps_buffer), "%d", steps);
     } else {
         snprintf(s_steps_buffer, sizeof(s_steps_buffer), "--");
@@ -832,21 +919,24 @@ static void update_health_data() {
 #ifdef DEBUG_LAYOUT
     snprintf(s_steps_buffer, sizeof(s_steps_buffer), "29999");
 #endif
-    text_layer_set_text(s_steps_value_layer, s_steps_buffer);
+    set_text_if_changed(s_steps_value_layer, s_steps_buffer,
+                        s_steps_cache, sizeof(s_steps_cache));
 
-    // Distance today (meters → km, 2 decimals)
-    HealthMetric m_dist = HealthMetricWalkedDistanceMeters;
-    if (health_service_metric_accessible(m_dist, start, end)
-        & HealthServiceAccessibilityMaskAvailable) {
-        int dist_m = (int)health_service_sum_today(m_dist);
-        int km     = dist_m / 1000;
-        int km_dec = (dist_m % 1000) / 10;
-        snprintf(s_dist_buffer, sizeof(s_dist_buffer),
-                 "%d.%02d", km, km_dec);
-    } else {
-        snprintf(s_dist_buffer, sizeof(s_dist_buffer), "--");
+    // Distance today (meters → km, 2 decimals). The distance layer is hidden
+    // in Larger mode — skip the (expensive) sum query entirely there.
+    if (s_face_mode != FaceModeLarger) {
+        if (s_dist_accessible) {
+            int dist_m = (int)health_service_sum_today(HealthMetricWalkedDistanceMeters);
+            int km     = dist_m / 1000;
+            int km_dec = (dist_m % 1000) / 10;
+            snprintf(s_dist_buffer, sizeof(s_dist_buffer),
+                     "%d.%02d", km, km_dec);
+        } else {
+            snprintf(s_dist_buffer, sizeof(s_dist_buffer), "--");
+        }
+        set_text_if_changed(s_dist_value_layer, s_dist_buffer,
+                            s_dist_cache, sizeof(s_dist_cache));
     }
-    text_layer_set_text(s_dist_value_layer, s_dist_buffer);
 
     // Heart rate (most recent reading)
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateBPM);
@@ -867,14 +957,19 @@ static void update_health_data() {
 #ifdef DEBUG_LAYOUT
     snprintf(s_hr_buffer, sizeof(s_hr_buffer), "199");
 #endif
-    text_layer_set_text(s_hr_value_layer, s_hr_buffer);
+    set_text_if_changed(s_hr_value_layer, s_hr_buffer,
+                        s_hr_cache, sizeof(s_hr_cache));
 #else
+    s_last_health_update = time(NULL);
     snprintf(s_steps_buffer, sizeof(s_steps_buffer), "--");
     snprintf(s_hr_buffer,    sizeof(s_hr_buffer),    "--");
     snprintf(s_dist_buffer,  sizeof(s_dist_buffer),  "--");
-    text_layer_set_text(s_steps_value_layer, s_steps_buffer);
-    text_layer_set_text(s_hr_value_layer,    s_hr_buffer);
-    text_layer_set_text(s_dist_value_layer,  s_dist_buffer);
+    set_text_if_changed(s_steps_value_layer, s_steps_buffer,
+                        s_steps_cache, sizeof(s_steps_cache));
+    set_text_if_changed(s_hr_value_layer, s_hr_buffer,
+                        s_hr_cache, sizeof(s_hr_cache));
+    set_text_if_changed(s_dist_value_layer, s_dist_buffer,
+                        s_dist_cache, sizeof(s_dist_cache));
 #endif
 }
 
@@ -901,7 +996,10 @@ static GColor get_large_battery_color(void) {
 // Bluetooth / connection service
 // =============================================================================
 static void connection_callback(bool connected) {
-    if (connected != s_bt_connected) {
+    // Vibrate only when the connection is lost — reconnects are visible on
+    // the icon, and the motor is one of the most expensive things on the
+    // watch. Stay silent during Quiet Time.
+    if (!connected && s_bt_connected && !quiet_time_is_active()) {
         vibes_short_pulse();
     }
     s_bt_connected = connected;
@@ -962,10 +1060,6 @@ static void battery_estimator_update(BatteryChargeState state) {
 
     s_bat_last_pct = state.charge_percent;
     s_bat_last_ts  = now;
-
-    APP_LOG(APP_LOG_LEVEL_DEBUG,
-            "bat est: dpct=%d dt=%ds rate=%ld ewma=%ld",
-            (int)dpct, (int)dt_sec, (long)rate_milli, (long)s_bat_ewma_milli);
 }
 
 static int32_t battery_since_charge_rate_milli(void) {
@@ -1056,7 +1150,8 @@ static void battery_callback(BatteryChargeState state) {
     snprintf(s_battery_text_buffer, sizeof(s_battery_text_buffer),
              "%d%%", s_battery_level);
     if (s_battery_value_layer) {
-        text_layer_set_text(s_battery_value_layer, s_battery_text_buffer);
+        set_text_if_changed(s_battery_value_layer, s_battery_text_buffer,
+                            s_battery_text_cache, sizeof(s_battery_text_cache));
         text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
     }
     if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
@@ -1112,9 +1207,12 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 
         // Time-based weather refresh: respects user-configured interval and
         // works correctly for intervals longer than an hour (where the old
-        // "minute % N == 0" check would never fire).
+        // "minute % N == 0" check would never fire). Skipped entirely while
+        // the phone is disconnected — a queued send would only burn radio
+        // time failing; the first connected tick past the interval fetches.
         time_t now = time(NULL);
-        if (!night_idle && now - s_last_weather_fetch >= s_weather_interval_min * 60) {
+        if (!night_idle && s_bt_connected &&
+            now - s_last_weather_fetch >= s_weather_interval_min * 60) {
             DictionaryIterator *iter;
             if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
                 dict_write_uint8(iter, MESSAGE_KEY_REQUEST_WEATHER, 1);
@@ -1208,8 +1306,14 @@ static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
 
     // Show fresh seconds on every tap. Multiple accel taps can arrive while
     // seconds are already active; repainting with cached seconds would make
-    // the display appear to skip a second on the next tick.
-    update_time_and_date_from_tm(now, true);
+    // the display appear to skip a second on the next tick. The date/temp
+    // row only needs a re-render when the day actually changed (i.e. waking
+    // from night idle across midnight) — taps happen hundreds of times a day.
+    if (now->tm_yday != s_rendered_yday) {
+        update_time_and_date_from_tm(now, true);
+    } else {
+        update_time_from_tm(now, true);
+    }
 
     // Reset the auto-shutoff timer on every tap (gives extended viewing if
     // the user keeps moving their wrist).
@@ -1223,12 +1327,16 @@ static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
 
     // Health queries can be slow enough to delay tick delivery on some
     // watches. Keep the active seconds window focused on time rendering, then
-    // refresh stats after seconds freeze again.
-    if (s_deferred_refresh_timer) {
-        app_timer_reschedule(s_deferred_refresh_timer, SECONDS_DURATION_MS + 250);
-    } else {
-        s_deferred_refresh_timer = app_timer_register(
-            SECONDS_DURATION_MS + 250, deferred_refresh_handler, NULL);
+    // refresh stats after seconds freeze again — but only when the regular
+    // minute tick hasn't refreshed them recently (it covers the common case;
+    // this deferred pass exists for staleness after night idle).
+    if (now_t - s_last_health_update > 60) {
+        if (s_deferred_refresh_timer) {
+            app_timer_reschedule(s_deferred_refresh_timer, SECONDS_DURATION_MS + 250);
+        } else {
+            s_deferred_refresh_timer = app_timer_register(
+                SECONDS_DURATION_MS + 250, deferred_refresh_handler, NULL);
+        }
     }
 }
 
@@ -1242,16 +1350,21 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     struct tm *now = localtime(&current);
     bool night_idle = now && is_night_idle(now);
 
+    // Always store incoming weather (the phone already spent the radio time
+    // delivering it); during night idle only the re-render is skipped, and
+    // the next visible refresh picks the new values up.
     Tuple *t = dict_find(iterator, MESSAGE_KEY_TEMPERATURE);
-    if (t && !night_idle) {
+    if (t) {
         s_temp_c = (int)t->value->int32;
         s_temp_known = true;
-        update_time_and_date();   // re-renders date row with new temp
+        if (!night_idle) {
+            update_time_and_date();   // re-renders date row with new temp
+        }
     }
     Tuple *wc = dict_find(iterator, MESSAGE_KEY_WEATHER_CODE);
-    if (wc && !night_idle) {
+    if (wc) {
         s_weather_code = (int)wc->value->int32;
-        if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
+        if (!night_idle && s_canvas_layer) layer_mark_dirty(s_canvas_layer);
     }
 
     // Settings from the configuration page
@@ -1348,10 +1461,6 @@ static void outbox_failed_callback(DictionaryIterator *it, AppMessageResult reas
     APP_LOG(APP_LOG_LEVEL_ERROR, "Outbox failed: %d", (int)reason);
 }
 
-static void outbox_sent_callback(DictionaryIterator *it, void *ctx) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "Outbox sent");
-}
-
 // =============================================================================
 // Window load / unload
 // =============================================================================
@@ -1420,6 +1529,7 @@ static void apply_face_mode_layout(GRect bounds) {
     layer_set_frame(text_layer_get_layer(s_temp_layer),
                     GRect(48, LARGE_TOP_Y, 56, LARGE_TOP_H));
     text_layer_set_font(s_temp_layer, s_font_top);
+    s_temp_color_cache = get_temp_color().argb;
     text_layer_set_text_color(s_temp_layer, get_temp_color());
     text_layer_set_text_alignment(s_temp_layer, GTextAlignmentLeft);
 
@@ -1451,7 +1561,7 @@ static void main_window_load(Window *window) {
     s_font_time_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_72));
     s_font_top = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TOP_20));
     s_font_label = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
-    s_font_stat  = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TEXT_18));
+    s_font_stat  = s_font_label;   // same face & size — share the handle
     s_font_stat_large = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_STAT_22));
     s_font_small = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_LABEL_14));
     s_font_seconds = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_18));
@@ -1466,6 +1576,16 @@ static void main_window_load(Window *window) {
     s_bt_off_bitmap           = gbitmap_create_with_resource(RESOURCE_ID_BLUETOOTH_OFF);
     s_dnd_bitmap              = gbitmap_create_with_resource(RESOURCE_ID_DND);
     s_steps_bitmap            = gbitmap_create_with_resource(RESOURCE_ID_STEPS);
+
+    // Filled-shape paths used by the canvas update proc (see GPathInfo
+    // definitions near the top).
+    s_heart_path       = gpath_create(&HEART_PATH_INFO);
+    s_heart_large_path = gpath_create(&HEART_LARGE_PATH_INFO);
+    s_arrow_left_path  = gpath_create(&ARROW_LEFT_PATH_INFO);
+    s_arrow_right_path = gpath_create(&ARROW_RIGHT_PATH_INFO);
+    s_bolt_path        = gpath_create(&BOLT_PATH_INFO);
+    s_bolt_small_path  = gpath_create(&BOLT_SMALL_PATH_INFO);
+
     refresh_quiet_time_state();
 
     // 1. Custom canvas covering the whole screen
@@ -1569,8 +1689,7 @@ static void main_window_unload(Window *window) {
     fonts_unload_custom_font(s_font_time);
     fonts_unload_custom_font(s_font_time_large);
     fonts_unload_custom_font(s_font_top);
-    fonts_unload_custom_font(s_font_label);
-    fonts_unload_custom_font(s_font_stat);
+    fonts_unload_custom_font(s_font_label);   // s_font_stat shares this handle
     fonts_unload_custom_font(s_font_stat_large);
     fonts_unload_custom_font(s_font_small);
     fonts_unload_custom_font(s_font_seconds);
@@ -1584,6 +1703,13 @@ static void main_window_unload(Window *window) {
     if (s_bt_off_bitmap)           gbitmap_destroy(s_bt_off_bitmap);
     if (s_dnd_bitmap)              gbitmap_destroy(s_dnd_bitmap);
     if (s_steps_bitmap)            gbitmap_destroy(s_steps_bitmap);
+
+    if (s_heart_path)       gpath_destroy(s_heart_path);
+    if (s_heart_large_path) gpath_destroy(s_heart_large_path);
+    if (s_arrow_left_path)  gpath_destroy(s_arrow_left_path);
+    if (s_arrow_right_path) gpath_destroy(s_arrow_right_path);
+    if (s_bolt_path)        gpath_destroy(s_bolt_path);
+    if (s_bolt_small_path)  gpath_destroy(s_bolt_small_path);
 }
 
 // =============================================================================
@@ -1692,7 +1818,6 @@ static void init() {
     app_message_register_inbox_received(inbox_received_callback);
     app_message_register_inbox_dropped(inbox_dropped_callback);
     app_message_register_outbox_failed(outbox_failed_callback);
-    app_message_register_outbox_sent(outbox_sent_callback);
     app_message_open(128, 128);
 }
 

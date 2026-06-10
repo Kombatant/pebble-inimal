@@ -33,7 +33,10 @@ function locationSuccess(pos) {
             };
 
             Pebble.sendAppMessage(dictionary,
-                function ()  { console.log('Weather sent: ' + temperature + 'C, code ' + weather_code); },
+                function ()  {
+                    localStorage.setItem('lastWeatherFetch', String(Date.now()));
+                    console.log('Weather sent: ' + temperature + 'C, code ' + weather_code);
+                },
                 function (e) { console.log('Weather send failed: ' + JSON.stringify(e)); }
             );
         } catch (e) {
@@ -56,7 +59,16 @@ function getWeather() {
 
 Pebble.addEventListener('ready', function () {
     console.log('PebbleKit JS ready');
-    getWeather();
+    // The JS environment restarts often (phone app relaunch, BT reconnect);
+    // an unconditional fetch here would push off-schedule weather updates
+    // that wake the watch. Fetch only if the last successful send is older
+    // than the configured refresh interval. Watch-driven REQUEST_WEATHER
+    // messages always fetch.
+    var intervalMin = parseInt(localStorage.getItem('weather') || '30', 10);
+    var lastFetch = parseInt(localStorage.getItem('lastWeatherFetch') || '0', 10);
+    if (Date.now() - lastFetch >= intervalMin * 60 * 1000) {
+        getWeather();
+    }
 });
 
 Pebble.addEventListener('appmessage', function (e) {
