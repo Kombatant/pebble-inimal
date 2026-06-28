@@ -15,6 +15,7 @@
             "TEMPERATURE",
             "REQUEST_WEATHER",
             "WEATHER_CODE",
+            "IS_DAY",
             "NIGHT_MODE_ENABLED",
             "NIGHT_START_HOUR",
             "NIGHT_END_HOUR",
@@ -169,5 +170,5 @@
             "watchface": true
         }
     },
-    "version": "0.8.6"
+    "version": "0.8.9"
 }

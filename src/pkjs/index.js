@@ -20,16 +20,20 @@ function locationSuccess(pos) {
     var url = 'https://api.open-meteo.com/v1/forecast' +
               '?latitude='  + pos.coords.latitude +
               '&longitude=' + pos.coords.longitude +
-              '&current=temperature_2m,weather_code';
+              '&current=temperature_2m,weather_code,is_day';
 
     xhrRequest(url, 'GET', function (responseText) {
         try {
             var json = JSON.parse(responseText);
             var temperature  = Math.round(json.current.temperature_2m);
             var weather_code = json.current.weather_code;
+            // is_day: 1 during local daylight, 0 at night (Open-Meteo, based on
+            // the location's sunrise/sunset). Drives sun-vs-moon on the watch.
+            var is_day = (json.current.is_day ? 1 : 0);
             var dictionary = {
                 'TEMPERATURE':  temperature,
-                'WEATHER_CODE': weather_code
+                'WEATHER_CODE': weather_code,
+                'IS_DAY':       is_day
             };
 
             Pebble.sendAppMessage(dictionary,

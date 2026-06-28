@@ -209,6 +209,8 @@ static bool s_battery_is_powered = false;
 static int s_temp_c = 0;
 static bool s_temp_known = false;
 static int s_weather_code = -1;   // -1 = unknown, otherwise WMO code from Open-Meteo
+static bool s_is_day = true;       // daylight vs night, from Open-Meteo is_day;
+                                   // drives sun-vs-moon. Defaults to day until known.
 
 // Configuration (mirrored on the phone via the settings page)
 static bool s_night_mode_enabled  = false;   // default: OFF (user opts in)
@@ -295,6 +297,7 @@ static void refresh_quiet_time_state_and_canvas(void) {
 #define PERSIST_KEY_WEATHER_FETCH_TS 115
 #define PERSIST_KEY_BAT_CHARGE_PCT   116
 #define PERSIST_KEY_NIGHT_UPDATE_INT 117
+#define PERSIST_KEY_IS_DAY           118
 
 // Battery life estimator state
 // EWMA stored as %/hour × 1000 (fixed-point) to avoid float in persist.
@@ -313,6 +316,29 @@ static uint8_t  s_bat_charge_pct     = 100;  // Battery % when last unplugged.
 // --- Weather icons -----------------------------------------------------------
 // Each icon is centered at (cx, cy) and fits roughly within a 40x32 bounding
 // box. draw_weather_icon() picks one based on a WMO weather code.
+
+// True when it's night at the user's location, per Open-Meteo's is_day flag
+// (sunrise/sunset based). Used so clear-weather icons show a moon instead of a
+// sun after dark. Until the first weather fetch arrives, assumes daytime.
+static bool is_night_now(void) {
+    return !s_is_day;
+}
+
+// Crescent moon: a filled white disc with a black disc offset over it to carve
+// out the crescent. The carving disc matches the black background.
+static void draw_moon_only(GContext *ctx, int cx, int cy) {
+    graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorPastelYellow, GColorWhite));
+    graphics_fill_circle(ctx, GPoint(cx, cy), 11);
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_circle(ctx, GPoint(cx + 6, cy - 4), 11);
+}
+
+static void draw_moon_only_small(GContext *ctx, int cx, int cy) {
+    graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorPastelYellow, GColorWhite));
+    graphics_fill_circle(ctx, GPoint(cx, cy), 8);
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_circle(ctx, GPoint(cx + 5, cy - 3), 8);
+}
 
 static void draw_sun_only(GContext *ctx, int cx, int cy) {
     GColor sun = COLOR_FALLBACK(GColorYellow, GColorWhite);
@@ -337,16 +363,29 @@ static void draw_sun_only(GContext *ctx, int cx, int cy) {
     graphics_context_set_stroke_width(ctx, 1);
 }
 
-// Sun + cloud (mainly clear / partly cloudy)
-static void draw_sun_cloud(GContext *ctx, int cx, int cy) {
-    graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
-    graphics_fill_circle(ctx, GPoint(cx + 11, cy - 9), 9);
+// Sun + cloud (mainly clear / partly cloudy). At night the sun is swapped for
+// a crescent moon (see draw_celestial_cloud).
+static void draw_celestial_cloud(GContext *ctx, int cx, int cy, bool night) {
+    if (night) {
+        // Crescent moon where the sun would be.
+        graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorPastelYellow, GColorWhite));
+        graphics_fill_circle(ctx, GPoint(cx + 11, cy - 9), 9);
+        graphics_context_set_fill_color(ctx, GColorBlack);
+        graphics_fill_circle(ctx, GPoint(cx + 16, cy - 12), 9);
+    } else {
+        graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
+        graphics_fill_circle(ctx, GPoint(cx + 11, cy - 9), 9);
+    }
 
     graphics_context_set_fill_color(ctx, GColorWhite);
     graphics_fill_circle(ctx, GPoint(cx - 14, cy + 4), 9);
     graphics_fill_circle(ctx, GPoint(cx,      cy - 1), 12);
     graphics_fill_circle(ctx, GPoint(cx + 13, cy + 5), 10);
     graphics_fill_rect  (ctx, GRect(cx - 19, cy + 3, 38, 9), 4, GCornersBottom);
+}
+
+static void draw_sun_cloud(GContext *ctx, int cx, int cy) {
+    draw_celestial_cloud(ctx, cx, cy, is_night_now());
 }
 
 // Plain cloud (overcast / fog)
@@ -398,7 +437,8 @@ static void draw_thunderstorm(GContext *ctx, int cx, int cy) {
 // 71-77 snow · 80-82 rain showers · 85-86 snow showers · 95-99 thunderstorm
 static void draw_weather_icon(GContext *ctx, int cx, int cy, int code) {
     if (code < 0)             { draw_sun_cloud(ctx, cx, cy); return; }
-    if (code == 0)            { draw_sun_only(ctx, cx, cy); return; }
+    if (code == 0)            { is_night_now() ? draw_moon_only(ctx, cx, cy)
+                                               : draw_sun_only(ctx, cx, cy); return; }
     if (code <= 2)            { draw_sun_cloud(ctx, cx, cy); return; }
     if (code == 3)            { draw_cloud_only(ctx, cx, cy, GColorWhite); return; }
     if (code >= 45 && code <= 48) {
@@ -434,15 +474,26 @@ static void draw_sun_only_small(GContext *ctx, int cx, int cy) {
     graphics_context_set_stroke_width(ctx, 1);
 }
 
-static void draw_sun_cloud_small(GContext *ctx, int cx, int cy) {
-    graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
-    graphics_fill_circle(ctx, GPoint(cx + 8, cy - 7), 6);
+static void draw_celestial_cloud_small(GContext *ctx, int cx, int cy, bool night) {
+    if (night) {
+        graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorPastelYellow, GColorWhite));
+        graphics_fill_circle(ctx, GPoint(cx + 8, cy - 7), 6);
+        graphics_context_set_fill_color(ctx, GColorBlack);
+        graphics_fill_circle(ctx, GPoint(cx + 12, cy - 9), 6);
+    } else {
+        graphics_context_set_fill_color(ctx, COLOR_FALLBACK(GColorYellow, GColorWhite));
+        graphics_fill_circle(ctx, GPoint(cx + 8, cy - 7), 6);
+    }
 
     graphics_context_set_fill_color(ctx, GColorWhite);
     graphics_fill_circle(ctx, GPoint(cx - 10, cy + 3), 7);
     graphics_fill_circle(ctx, GPoint(cx,       cy - 1), 9);
     graphics_fill_circle(ctx, GPoint(cx + 10,  cy + 3), 7);
     graphics_fill_rect  (ctx, GRect(cx - 14, cy + 2, 29, 7), 3, GCornersBottom);
+}
+
+static void draw_sun_cloud_small(GContext *ctx, int cx, int cy) {
+    draw_celestial_cloud_small(ctx, cx, cy, is_night_now());
 }
 
 static void draw_rain_small(GContext *ctx, int cx, int cy) {
@@ -474,7 +525,8 @@ static void draw_thunderstorm_small(GContext *ctx, int cx, int cy) {
 
 static void draw_weather_icon_small(GContext *ctx, int cx, int cy, int code) {
     if (code < 0)             { draw_sun_cloud_small(ctx, cx, cy); return; }
-    if (code == 0)            { draw_sun_only_small(ctx, cx, cy); return; }
+    if (code == 0)            { is_night_now() ? draw_moon_only_small(ctx, cx, cy)
+                                               : draw_sun_only_small(ctx, cx, cy); return; }
     if (code <= 2)            { draw_sun_cloud_small(ctx, cx, cy); return; }
     if (code == 3)            { draw_cloud_only_small(ctx, cx, cy, GColorWhite); return; }
     if (code >= 45 && code <= 48) {
@@ -1366,6 +1418,12 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         s_weather_code = (int)wc->value->int32;
         if (!night_idle && s_canvas_layer) layer_mark_dirty(s_canvas_layer);
     }
+    Tuple *isday = dict_find(iterator, MESSAGE_KEY_IS_DAY);
+    if (isday) {
+        s_is_day = (isday->value->int32 != 0);
+        persist_write_bool(PERSIST_KEY_IS_DAY, s_is_day);
+        if (!night_idle && s_canvas_layer) layer_mark_dirty(s_canvas_layer);
+    }
 
     // Settings from the configuration page
     Tuple *night = dict_find(iterator, MESSAGE_KEY_NIGHT_MODE_ENABLED);
@@ -1725,6 +1783,9 @@ static void init() {
     if (persist_exists(PERSIST_KEY_WEATHER)) {
         s_weather_code = persist_read_int(PERSIST_KEY_WEATHER);
     }
+    if (persist_exists(PERSIST_KEY_IS_DAY)) {
+        s_is_day = persist_read_bool(PERSIST_KEY_IS_DAY);
+    }
     // Restore the last weather-fetch timestamp so a relaunch honors the
     // configured interval instead of firing a fresh fetch immediately.
     if (persist_exists(PERSIST_KEY_WEATHER_FETCH_TS)) {
@@ -1825,6 +1886,7 @@ static void deinit() {
     persist_write_int (PERSIST_KEY_TEMP,        s_temp_c);
     persist_write_bool(PERSIST_KEY_TEMP_KNOWN,  s_temp_known);
     persist_write_int (PERSIST_KEY_WEATHER,     s_weather_code);
+    persist_write_bool(PERSIST_KEY_IS_DAY,      s_is_day);
     persist_write_int (PERSIST_KEY_WEATHER_FETCH_TS, (int)s_last_weather_fetch);
     persist_write_bool(PERSIST_KEY_NIGHT_MODE,  s_night_mode_enabled);
     persist_write_int (PERSIST_KEY_NIGHT_START, s_night_start_hour);
