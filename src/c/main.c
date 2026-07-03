@@ -14,6 +14,14 @@
 #include <ctype.h>
 #include <string.h>
 
+// Informational logging compiles out of release builds — each log call adds
+// code size and a serial wakeup. Define DEBUG_LOGS to re-enable.
+#ifdef DEBUG_LOGS
+#define LOG_INFO(fmt, ...) APP_LOG(APP_LOG_LEVEL_INFO, fmt, ##__VA_ARGS__)
+#else
+#define LOG_INFO(fmt, ...)
+#endif
+
 // ---------- Layout constants (Emery is 200 x 228) -----------------------------
 // Vertical rhythm: each section sits a few px below the one above so the face
 // never feels glued together.
@@ -174,6 +182,13 @@ static char s_hr_cache[12];
 static char s_dist_cache[16];
 static char s_battery_text_cache[8];
 static uint8_t s_temp_color_cache = 0;
+static uint8_t s_battery_color_cache = 0;
+
+// Cached measure of s_battery_text_buffer for the minimal-mode canvas proc.
+// The canvas repaints on every window render pass (at least once a minute),
+// but the battery string changes rarely — re-measure only when it does.
+static GSize s_battery_text_size;
+static char  s_battery_text_measured[8];
 
 static void set_text_if_changed(TextLayer *layer, const char *text,
                                 char *cache, size_t cache_size) {
@@ -308,6 +323,31 @@ static int32_t  s_bat_ewma_milli    = 0;     // 0 == uninitialized
 static bool     s_bat_ewma_init     = false;
 static time_t   s_bat_last_charge_ts = 0;    // Last transition off external power.
 static uint8_t  s_bat_charge_pct     = 100;  // Battery % when last unplugged.
+
+// Persist snapshot: values as loaded (or defaulted) at init. deinit() writes
+// only keys whose live value differs — watchfaces exit often (notifications,
+// app launches) and each flash write costs energy and wear. Settings and
+// charge-transition keys are persisted at the moment they change, so deinit
+// doesn't need to touch them at all.
+static int     s_snap_temp_c;
+static bool    s_snap_temp_known;
+static int     s_snap_weather_code;
+static time_t  s_snap_weather_fetch;
+static uint8_t s_snap_bat_last_pct;
+static time_t  s_snap_bat_last_ts;
+static int32_t s_snap_bat_ewma_milli;
+static bool    s_snap_bat_ewma_init;
+
+static void persist_snapshot_take(void) {
+    s_snap_temp_c         = s_temp_c;
+    s_snap_temp_known     = s_temp_known;
+    s_snap_weather_code   = s_weather_code;
+    s_snap_weather_fetch  = s_last_weather_fetch;
+    s_snap_bat_last_pct   = s_bat_last_pct;
+    s_snap_bat_last_ts    = s_bat_last_ts;
+    s_snap_bat_ewma_milli = s_bat_ewma_milli;
+    s_snap_bat_ewma_init  = s_bat_ewma_init;
+}
 
 // =============================================================================
 // Drawing helpers
@@ -630,6 +670,10 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
         build_tick_marks(W, H);
     }
 
+    // 60 short strokes per pass; they're near-axis-aligned so antialiasing
+    // buys nothing visible here — skip its per-pixel blend cost.
+    graphics_context_set_antialiased(ctx, false);
+
     // Minute ticks
     graphics_context_set_stroke_color(ctx, GColorDarkGray);
     graphics_context_set_stroke_width(ctx, 1);
@@ -645,8 +689,9 @@ static void draw_tick_marks(GContext *ctx, int W, int H) {
         graphics_draw_line(ctx, s_tick_marks[i].p0, s_tick_marks[i].p1);
     }
 
-    // Reset stroke width so other drawing isn't affected
+    // Reset stroke width and antialiasing so other drawing isn't affected
     graphics_context_set_stroke_width(ctx, 1);
+    graphics_context_set_antialiased(ctx, true);
 }
 
 static GBitmap *get_battery_bitmap(void) {
@@ -740,8 +785,8 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
     const int W = bounds.size.w;
     const int H = bounds.size.h;
 
-    graphics_context_set_fill_color(ctx, GColorBlack);
-    graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+    // No background fill here: the window clears itself with GColorBlack
+    // before children render, so filling again just doubles the work.
 
     if (s_face_mode == FaceModeLarger) {
         draw_larger_canvas(ctx, W, H);
@@ -812,12 +857,18 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
 
         // Battery percentage text right of icon
         if (s_battery_text_buffer[0]) {
-            GSize text_size = graphics_text_layout_get_content_size(
-                s_battery_text_buffer,
-                s_font_label,
-                GRect(0, 0, W, 22),
-                GTextOverflowModeWordWrap,
-                GTextAlignmentLeft);
+            if (strcmp(s_battery_text_measured, s_battery_text_buffer) != 0) {
+                s_battery_text_size = graphics_text_layout_get_content_size(
+                    s_battery_text_buffer,
+                    s_font_label,
+                    GRect(0, 0, W, 22),
+                    GTextOverflowModeWordWrap,
+                    GTextAlignmentLeft);
+                strncpy(s_battery_text_measured, s_battery_text_buffer,
+                        sizeof(s_battery_text_measured) - 1);
+                s_battery_text_measured[sizeof(s_battery_text_measured) - 1] = '\0';
+            }
+            GSize text_size = s_battery_text_size;
 
             graphics_context_set_text_color(ctx,
                 COLOR_FALLBACK(GColorYellow, GColorWhite));
@@ -1204,7 +1255,11 @@ static void battery_callback(BatteryChargeState state) {
     if (s_battery_value_layer) {
         set_text_if_changed(s_battery_value_layer, s_battery_text_buffer,
                             s_battery_text_cache, sizeof(s_battery_text_cache));
-        text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
+        GColor bat_color = get_large_battery_color();
+        if (bat_color.argb != s_battery_color_cache) {
+            s_battery_color_cache = bat_color.argb;
+            text_layer_set_text_color(s_battery_value_layer, bat_color);
+        }
     }
     if (s_canvas_layer) layer_mark_dirty(s_canvas_layer);
 }
@@ -1243,19 +1298,25 @@ static void app_focus_handler(bool in_focus) {
 }
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
-    refresh_quiet_time_state_and_canvas();
-
     if (units_changed & MINUTE_UNIT) {
         bool night_idle = is_night_idle(tick_time);
 
-        // Skip periodic display/health work between configured night-idle ticks.
+        // Skip periodic display/health work between configured night-idle
+        // ticks. Quiet-time state is refreshed below (and on tap/focus), so
+        // skipped minutes do no work at all.
         if (night_idle && (tick_time->tm_min % s_night_update_interval_min != 0)) {
             return;
         }
 
+        refresh_quiet_time_state_and_canvas();
+
         s_displayed_seconds = 0;
         update_time_and_date();
-        update_health_data();
+        // Health queries are pointless while asleep with the screen unwatched;
+        // the deferred refresh on wrist tap re-fetches on wake if stale.
+        if (!night_idle) {
+            update_health_data();
+        }
 
         // Time-based weather refresh: respects user-configured interval and
         // works correctly for intervals longer than an hour (where the old
@@ -1430,7 +1491,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     if (night) {
         s_night_mode_enabled = (night->value->int32 != 0);
         persist_write_bool(PERSIST_KEY_NIGHT_MODE, s_night_mode_enabled);
-        APP_LOG(APP_LOG_LEVEL_INFO, "Night mode: %d", s_night_mode_enabled);
+        LOG_INFO("Night mode: %d", s_night_mode_enabled);
     }
     Tuple *nstart = dict_find(iterator, MESSAGE_KEY_NIGHT_START_HOUR);
     if (nstart) {
@@ -1438,7 +1499,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         if (v >= 0 && v <= 23) {
             s_night_start_hour = v;
             persist_write_int(PERSIST_KEY_NIGHT_START, s_night_start_hour);
-            APP_LOG(APP_LOG_LEVEL_INFO, "Night start: %d:00", v);
+            LOG_INFO("Night start: %d:00", v);
         }
     }
     Tuple *nend = dict_find(iterator, MESSAGE_KEY_NIGHT_END_HOUR);
@@ -1447,7 +1508,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         if (v >= 0 && v <= 23) {
             s_night_end_hour = v;
             persist_write_int(PERSIST_KEY_NIGHT_END, s_night_end_hour);
-            APP_LOG(APP_LOG_LEVEL_INFO, "Night end: %d:00", v);
+            LOG_INFO("Night end: %d:00", v);
         }
     }
     Tuple *night_interval = dict_find(iterator, MESSAGE_KEY_NIGHT_UPDATE_INTERVAL);
@@ -1456,7 +1517,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         if (is_valid_night_update_interval(v)) {
             s_night_update_interval_min = v;
             persist_write_int(PERSIST_KEY_NIGHT_UPDATE_INT, s_night_update_interval_min);
-            APP_LOG(APP_LOG_LEVEL_INFO, "Night update interval: %d min", v);
+            LOG_INFO("Night update interval: %d min", v);
         }
     }
     Tuple *interval = dict_find(iterator, MESSAGE_KEY_WEATHER_INTERVAL);
@@ -1465,7 +1526,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         if (v >= 5 && v <= 720) {            // sanity bounds
             s_weather_interval_min = v;
             persist_write_int(PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
-            APP_LOG(APP_LOG_LEVEL_INFO, "Weather interval: %d min", v);
+            LOG_INFO("Weather interval: %d min", v);
         }
     }
     Tuple *mode = dict_find(iterator, MESSAGE_KEY_FACE_MODE);
@@ -1480,7 +1541,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
                 update_time_and_date();
                 update_health_data();
             }
-            APP_LOG(APP_LOG_LEVEL_INFO, "Face mode: %d", v);
+            LOG_INFO("Face mode: %d", v);
         }
     }
     Tuple *backlight = dict_find(iterator, MESSAGE_KEY_BACKLIGHT_COLOR);
@@ -1490,7 +1551,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
             s_backlight_color = (BacklightColor)v;
             persist_write_int(PERSIST_KEY_BACKLIGHT_COLOR, (int)s_backlight_color);
             apply_backlight_color();
-            APP_LOG(APP_LOG_LEVEL_INFO, "Backlight colour: %d", v);
+            LOG_INFO("Backlight colour: %d", v);
         }
     }
 
@@ -1600,6 +1661,7 @@ static void apply_face_mode_layout(GRect bounds) {
     layer_set_frame(text_layer_get_layer(s_battery_value_layer),
                     GRect(50, LARGE_BATTERY_Y + 4, 50, 32));
     text_layer_set_font(s_battery_value_layer, s_font_stat_large);
+    s_battery_color_cache = get_large_battery_color().argb;
     text_layer_set_text_color(s_battery_value_layer, get_large_battery_color());
     text_layer_set_text_alignment(s_battery_value_layer, GTextAlignmentLeft);
 
@@ -1852,6 +1914,9 @@ static void init() {
         s_battery_is_powered = persist_read_bool(PERSIST_KEY_BAT_POWERED);
     }
 
+    // Remember what was loaded so deinit can skip unchanged flash writes.
+    persist_snapshot_take();
+
     // Treat startup as a recent "tap" so we don't immediately enter night-idle
     // (e.g., during a watch reboot at 3am).
     s_last_tap_time = time(NULL);
@@ -1883,25 +1948,25 @@ static void init() {
 }
 
 static void deinit() {
-    persist_write_int (PERSIST_KEY_TEMP,        s_temp_c);
-    persist_write_bool(PERSIST_KEY_TEMP_KNOWN,  s_temp_known);
-    persist_write_int (PERSIST_KEY_WEATHER,     s_weather_code);
-    persist_write_bool(PERSIST_KEY_IS_DAY,      s_is_day);
-    persist_write_int (PERSIST_KEY_WEATHER_FETCH_TS, (int)s_last_weather_fetch);
-    persist_write_bool(PERSIST_KEY_NIGHT_MODE,  s_night_mode_enabled);
-    persist_write_int (PERSIST_KEY_NIGHT_START, s_night_start_hour);
-    persist_write_int (PERSIST_KEY_NIGHT_END,   s_night_end_hour);
-    persist_write_int (PERSIST_KEY_NIGHT_UPDATE_INT, s_night_update_interval_min);
-    persist_write_int (PERSIST_KEY_WEATHER_INT, s_weather_interval_min);
-    persist_write_int (PERSIST_KEY_FACE_MODE,   (int)s_face_mode);
-    persist_write_int (PERSIST_KEY_BACKLIGHT_COLOR, (int)s_backlight_color);
-    persist_write_int (PERSIST_KEY_BAT_LAST_PCT,   (int)s_bat_last_pct);
-    persist_write_int (PERSIST_KEY_BAT_LAST_TS,    (int)s_bat_last_ts);
-    persist_write_int (PERSIST_KEY_BAT_EWMA_MILLI, (int)s_bat_ewma_milli);
-    persist_write_bool(PERSIST_KEY_BAT_EWMA_INIT,  s_bat_ewma_init);
-    persist_write_int (PERSIST_KEY_BAT_LAST_CHARGE, (int)s_bat_last_charge_ts);
-    persist_write_int (PERSIST_KEY_BAT_CHARGE_PCT,  (int)s_bat_charge_pct);
-    persist_write_bool(PERSIST_KEY_BAT_POWERED,     s_battery_is_powered);
+    // Write only runtime values that changed since init. Settings keys and
+    // charge-transition keys are persisted where they change (inbox handler /
+    // battery callback), so a typical exit performs zero flash writes.
+    if (s_temp_c != s_snap_temp_c)
+        persist_write_int (PERSIST_KEY_TEMP,        s_temp_c);
+    if (s_temp_known != s_snap_temp_known)
+        persist_write_bool(PERSIST_KEY_TEMP_KNOWN,  s_temp_known);
+    if (s_weather_code != s_snap_weather_code)
+        persist_write_int (PERSIST_KEY_WEATHER,     s_weather_code);
+    if (s_last_weather_fetch != s_snap_weather_fetch)
+        persist_write_int (PERSIST_KEY_WEATHER_FETCH_TS, (int)s_last_weather_fetch);
+    if (s_bat_last_pct != s_snap_bat_last_pct)
+        persist_write_int (PERSIST_KEY_BAT_LAST_PCT,   (int)s_bat_last_pct);
+    if (s_bat_last_ts != s_snap_bat_last_ts)
+        persist_write_int (PERSIST_KEY_BAT_LAST_TS,    (int)s_bat_last_ts);
+    if (s_bat_ewma_milli != s_snap_bat_ewma_milli)
+        persist_write_int (PERSIST_KEY_BAT_EWMA_MILLI, (int)s_bat_ewma_milli);
+    if (s_bat_ewma_init != s_snap_bat_ewma_init)
+        persist_write_bool(PERSIST_KEY_BAT_EWMA_INIT,  s_bat_ewma_init);
     if (s_seconds_timeout_timer) app_timer_cancel(s_seconds_timeout_timer);
     if (s_seconds_tick_timer) app_timer_cancel(s_seconds_tick_timer);
     if (s_deferred_refresh_timer) app_timer_cancel(s_deferred_refresh_timer);
